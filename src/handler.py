@@ -1,11 +1,11 @@
 
-import json
+from common.handler import JsonHandler
 
 from tornado.gen import coroutine
 from tornado.web import HTTPError, RequestHandler
 
 
-class AppVersionHandler(RequestHandler):
+class AppVersionHandler(JsonHandler):
     def data_received(self, chunk):
         pass
 
@@ -28,4 +28,4 @@ class AppVersionHandler(RequestHandler):
                 "url": bundle["bundle_url"]
             }
 
-        self.write(json.dumps(result))
+        self.dumps(result)
