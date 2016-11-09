@@ -66,10 +66,7 @@ class ApplicationController(a.AdminController):
             ])
         ]
 
-    def scopes_read(self):
-        return ["dlc_admin"]
-
-    def scopes_write(self):
+    def access_scopes(self):
         return ["dlc_admin"]
 
 
@@ -137,10 +134,7 @@ class ApplicationVersionController(a.AdminController):
             ])
         ]
 
-    def scopes_read(self):
-        return ["dlc_admin"]
-
-    def scopes_write(self):
+    def access_scopes(self):
         return ["dlc_admin"]
 
     @coroutine
@@ -234,10 +228,7 @@ class BundleController(a.AdminController):
             ])
         ]
 
-    def scopes_read(self):
-        return ["dlc_admin"]
-
-    def scopes_write(self):
+    def access_scopes(self):
         return ["dlc_admin"]
 
     @coroutine
@@ -267,7 +258,7 @@ class BundleController(a.AdminController):
         host_location = self.application.data_host_location
 
         yield dlc.upload_bundle(app_id, data_id, bundle["bundle_name"], data_location, host_location,
-                                base64.b64decode(content))
+                                content[0].data)
 
         bundle = yield dlc.get_bundle(data_id, bundle_id)
 
@@ -343,12 +334,8 @@ class DataVersionController(a.AdminController):
             ])
         ]
 
-    def scopes_read(self):
+    def access_scopes(self):
         return ["dlc_admin"]
-
-    def scopes_write(self):
-        return ["dlc_admin"]
-
 
 class NewBundleController(a.AdminController):
     @coroutine
@@ -387,10 +374,7 @@ class NewBundleController(a.AdminController):
             ])
         ]
 
-    def scopes_read(self):
-        return ["dlc_admin"]
-
-    def scopes_write(self):
+    def access_scopes(self):
         return ["dlc_admin"]
 
     @coroutine
@@ -408,7 +392,7 @@ class NewBundleController(a.AdminController):
         host_location = self.application.data_host_location
 
         yield dlc.upload_bundle(
-            app_id, data_id, bundle_name, data_location, host_location, base64.b64decode(content))
+            app_id, data_id, bundle_name, data_location, host_location, content[0].data)
 
         raise a.Redirect(
             "data_version",
@@ -441,8 +425,5 @@ class RootAdminController(a.AdminController):
             ])
         ]
 
-    def scopes_read(self):
-        return ["dlc_admin"]
-
-    def scopes_write(self):
+    def access_scopes(self):
         return ["dlc_admin"]
