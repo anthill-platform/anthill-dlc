@@ -1,8 +1,10 @@
 
-from tornado.gen import coroutine, Return
+from tornado.gen import coroutine, Return, Future, IOLoop
+from tornado.queues import Queue
 
 import common.admin as a
 import base64
+import logging
 
 from model.dlc import VersionUsesDataError
 from common.environment import AppNotFound
@@ -53,7 +55,7 @@ class ApplicationController(a.AdminController):
                        version_id=v_name) for v_name, v_id in data["versions"].iteritems()
             ]),
             a.links("Data versions", [
-                a.link("data_version", str(d["version_id"]), "tags",
+                a.link("data_version", str(d["version_id"]), "folder",
                        app_id=self.context.get("app_id"),
                        data_id=d["version_id"])
                 for d in data["datas"]
@@ -162,7 +164,12 @@ class ApplicationVersionController(a.AdminController):
             app_id=app_id, version_id=version_id)
 
 
-class BundleController(a.AdminController):
+class BundleController(a.UploadAdminController):
+    def __init__(self, app, token):
+        super(BundleController, self).__init__(app, token)
+
+        self.chunks = Queue(10)
+
     @coroutine
     def delete(self, content):
 
@@ -200,7 +207,7 @@ class BundleController(a.AdminController):
         result = {
             "app_name": app["title"],
             "bundle_name": bundle["bundle_name"],
-            "bundle_hash": bundle["bundle_hash"]
+            "bundle_hash": bundle["bundle_hash"] if bundle["bundle_hash"] else "(Not uploaded yet)"
         }
 
         raise a.Return(result)
@@ -213,12 +220,11 @@ class BundleController(a.AdminController):
                 a.link("data_version", "Data #" + str(self.context.get("data_id")),
                        app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
             ], data.get("bundle_name")),
+            a.file_upload("Upload contents"),
             a.form("Bundle", fields={
                 "bundle_name": a.field("Bundle name", "readonly", "primary", "non-empty"),
-                "bundle_hash": a.field("Bundle hash", "readonly", "primary", "non-empty"),
-                "content": a.field("Upload a new content", "file", "primary"),
+                "bundle_hash": a.field("Bundle hash", "readonly", "primary", "non-empty")
             }, methods={
-                "update": a.method("Update", "primary"),
                 "delete": a.method("Delete", "danger")
             }, data=data),
             a.links("Navigate", [
@@ -232,7 +238,7 @@ class BundleController(a.AdminController):
         return ["dlc_admin"]
 
     @coroutine
-    def update(self, content):
+    def receive_started(self, filename):
 
         dlc = self.application.dlc
         env_service = self.application.env_service
@@ -246,9 +252,6 @@ class BundleController(a.AdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        if not content:
-            raise a.ActionError("No content passed")
-
         bundle = yield dlc.get_bundle(data_id, bundle_id)
 
         if bundle is None:
@@ -257,18 +260,36 @@ class BundleController(a.AdminController):
         data_location = self.application.data_location
         host_location = self.application.data_host_location
 
-        yield dlc.upload_bundle(app_id, data_id, bundle["bundle_name"], data_location, host_location,
-                                content[0].data)
+        IOLoop.current().spawn_callback(dlc.upload_bundle,
+            app_id, data_id, bundle["bundle_name"], data_location, host_location,
+            self.__producer__)
 
-        bundle = yield dlc.get_bundle(data_id, bundle_id)
+    @coroutine
+    def receive_data(self, chunk):
+        yield self.chunks.put(chunk)
 
-        result = {
-            "app_name": app["title"],
-            "bundle_name": bundle["bundle_name"],
-            "bundle_hash": bundle["bundle_hash"]
-        }
+    @coroutine
+    def receive_completed(self):
 
-        raise a.Return(result)
+        yield self.chunks.put(None)
+
+        app_id = self.context.get("app_id")
+        data_id = self.context.get("data_id")
+        bundle_id = self.context.get("bundle_id")
+
+        raise a.Redirect("bundle",
+                         message="Bundle has been uploaded",
+                         app_id=app_id,
+                         data_id=data_id,
+                         bundle_id=bundle_id)
+
+    @coroutine
+    def __producer__(self, write):
+        while True:
+            chunk = yield self.chunks.get()
+            if chunk is None:
+                return
+            yield write(chunk)
 
 
 class DataVersionController(a.AdminController):
@@ -337,6 +358,7 @@ class DataVersionController(a.AdminController):
     def access_scopes(self):
         return ["dlc_admin"]
 
+
 class NewBundleController(a.AdminController):
     @coroutine
     def get(self, app_id, data_id):
@@ -363,11 +385,10 @@ class NewBundleController(a.AdminController):
                 a.link("data_version", "Data #" + str(self.context.get("data_id")),
                        app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
             ], "New bundle"),
-            a.form("Upload a new bundle", fields={
+            a.form("Create a new bundle", fields={
                 "bundle_name": a.field("Bundle name", "text", "primary", "non-empty"),
-                "content": a.field("Content of the new bundle", "file", "primary", "non-empty"),
             }, methods={
-                "upload": a.method("Upload", "primary")
+                "create": a.method("Create", "primary")
             }, data=data),
             a.links("Navigate", [
                 a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
@@ -378,26 +399,19 @@ class NewBundleController(a.AdminController):
         return ["dlc_admin"]
 
     @coroutine
-    def upload(self, bundle_name, content):
+    def create(self, bundle_name):
 
         dlc = self.application.dlc
 
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
-        if not content:
-            raise a.ActionError("No content passed")
-
-        data_location = self.application.data_location
-        host_location = self.application.data_host_location
-
-        yield dlc.upload_bundle(
-            app_id, data_id, bundle_name, data_location, host_location, content[0].data)
+        bundle_id = yield dlc.create_bundle(data_id, bundle_name)
 
         raise a.Redirect(
-            "data_version",
-            message="New bundle has been uploaded",
-            app_id=app_id, data_id=data_id)
+            "bundle",
+            message="New bundle has been created",
+            app_id=app_id, data_id=data_id, bundle_id=bundle_id)
 
 
 class RootAdminController(a.AdminController):

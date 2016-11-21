@@ -251,7 +251,7 @@ class DLCModel(Model):
                 raise DLCError("Failed to create app version: " + e.args[1])
 
     @coroutine
-    def upload_bundle(self, app_id, data_id, bundle_name, data_location, host_location, file_data):
+    def upload_bundle(self, app_id, data_id, bundle_name, data_location, host_location, producer):
 
         bundle = yield self.find_bundle(data_id, bundle_name)
 
@@ -265,11 +265,19 @@ class DLCModel(Model):
 
         bundle_file = os.path.join(data_location, str(app_id), str(data_id), str(bundle_id))
 
+        md5 = hashlib.md5()
         output_file = open(bundle_file, 'wb')
-        output_file.write(file_data)
+
+        @coroutine
+        def write(data):
+            output_file.write(data)
+            md5.update(data)
+
+        yield producer(write)
+
         output_file.close()
 
-        bundle_hash = hashlib.md5(open(bundle_file, 'rb').read()).hexdigest()
+        bundle_hash = md5.hexdigest()
         bundle_url = host_location + os.path.join(str(app_id), str(data_id), str(bundle_id))
 
         try:
