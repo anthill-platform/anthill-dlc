@@ -10,7 +10,10 @@ import common.access
 import common.sign
 import common.environment
 
-from model.dlc import DLCModel
+from model.deploy import DeploymentModel
+from model.bundle import BundlesModel
+from model.data import DatasModel
+from model.apps import ApplicationsModel
 
 import handler
 import admin
@@ -33,14 +36,16 @@ class DLCServer(common.server.Server):
             db=options.cache_db,
             max_connections=options.cache_max_connections)
 
-        self.data_location = options.data_location
         self.data_host_location = options.data_host_location
 
-        self.dlc = DLCModel(self.db)
+        self.app_versions = ApplicationsModel(self.db)
+        self.bundles = BundlesModel(self.db)
+        self.deployment = DeploymentModel(self.bundles, self.app_versions)
+        self.datas = DatasModel(self.bundles, self.deployment, self.db)
         self.env_service = common.environment.EnvironmentClient(self.cache)
 
     def get_models(self):
-        return [self.dlc]
+        return [self.bundles, self.datas, self.app_versions, self.deployment]
 
     def get_admin(self):
         return {
@@ -50,6 +55,7 @@ class DLCServer(common.server.Server):
             "data_version": admin.DataVersionController,
             "bundle": admin.BundleController,
             "new_bundle": admin.NewBundleController,
+            "app_settings": admin.ApplicationSettingsController
         }
 
     def get_metadata(self):

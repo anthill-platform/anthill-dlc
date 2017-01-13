@@ -2,7 +2,9 @@
 from common.handler import JsonHandler
 
 from tornado.gen import coroutine
-from tornado.web import HTTPError, RequestHandler
+from tornado.web import HTTPError
+
+from model.apps import NoSuchApplicationVersionError, ApplicationVersionError
 
 
 class AppVersionHandler(JsonHandler):
@@ -12,20 +14,25 @@ class AppVersionHandler(JsonHandler):
     @coroutine
     def get(self, app_name, version_name):
 
-        dlc = self.application.dlc
-        version_id = yield dlc.get_application_version(app_name, version_name)
+        apps = self.application.app_versions
+        bundles = self.application.bundles
 
-        if version_id is None:
+        try:
+            v = yield apps.get_application_version(app_name, version_name)
+        except NoSuchApplicationVersionError:
             raise HTTPError(404, "No such app and/or version")
+        except ApplicationVersionError as e:
+            raise HTTPError(500, e.message)
 
-        bundles = yield dlc.list_bundles(version_id)
+        bundles = yield bundles.list_bundles(v.gamespace_id, v.current)
 
         result = {}
 
         for bundle in bundles:
-            result[bundle["bundle_name"]] = {
-                "hash": bundle["bundle_hash"],
-                "url": bundle["bundle_url"]
+            result[bundle.name] = {
+                "hash": bundle.hash,
+                "url": bundle.url,
+                "size": bundle.size
             }
 
         self.dumps(result)

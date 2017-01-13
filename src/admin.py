@@ -6,7 +6,11 @@ import common.admin as a
 import base64
 import logging
 
-from model.dlc import VersionUsesDataError
+from model.data import VersionUsesDataError, DataError, NoSuchDataError, DatasModel
+from model.apps import ApplicationVersionError, NoSuchApplicationVersionError, NoSuchApplicationError, ApplicationError
+from model.bundle import BundleError, NoSuchBundleError, BundlesModel
+from model.deploy import DeploymentMethods, DeploymentModel
+
 from common.environment import AppNotFound
 
 
@@ -21,8 +25,8 @@ class ApplicationController(a.AdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        dlc = self.application.dlc
-        datas = yield dlc.list_data_versions(app_id)
+        datas = self.application.datas
+        datas = yield datas.list_data_versions(self.gamespace, app_id)
 
         result = {
             "app_name": app["title"],
@@ -37,8 +41,12 @@ class ApplicationController(a.AdminController):
 
         app_id = self.context.get("app_id")
 
-        dlc = self.application.dlc
-        data_id = yield dlc.create_data_version(app_id)
+        datas = self.application.datas
+
+        try:
+            data_id = yield datas.create_data_version(self.gamespace, app_id)
+        except DataError as e:
+            raise a.ActionError(e.message)
 
         raise a.Redirect(
             "data_version",
@@ -55,16 +63,17 @@ class ApplicationController(a.AdminController):
                        version_id=v_name) for v_name, v_id in data["versions"].iteritems()
             ]),
             a.links("Data versions", [
-                a.link("data_version", str(d["version_id"]), "folder",
+                a.link("data_version", str(d.version_id), "folder",
                        app_id=self.context.get("app_id"),
-                       data_id=d["version_id"])
+                       data_id=d.version_id)
                 for d in data["datas"]
             ]),
             a.form("Actions", fields={}, methods={
                 "new_data_version": a.method("New data version", "primary")
             }, data=data),
             a.links("Navigate", [
-                a.link("index", "Back")
+                a.link("index", "Back"),
+                a.link("app_settings", "Application Settings", icon="cog", app_id=self.context.get("app_id"))
             ])
         ]
 
@@ -79,9 +88,12 @@ class ApplicationVersionController(a.AdminController):
         app_id = self.context.get("app_id")
         version_id = self.context.get("version_id")
 
-        dlc = self.application.dlc
+        app_versions = self.application.app_versions
 
-        yield dlc.delete_application_version(app_id, version_id)
+        try:
+            yield app_versions.delete_application_version(self.gamespace, app_id, version_id)
+        except ApplicationVersionError as e:
+            raise a.ActionError(e.message)
 
         raise a.Redirect(
             "app",
@@ -91,7 +103,8 @@ class ApplicationVersionController(a.AdminController):
     @coroutine
     def get(self, app_id, version_id):
 
-        dlc = self.application.dlc
+        app_versions = self.application.app_versions
+        datas = self.application.datas
         env_service = self.application.env_service
 
         try:
@@ -99,9 +112,19 @@ class ApplicationVersionController(a.AdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        attach_to = yield dlc.get_application_version(app_id, version_id)
+        try:
+            v = yield app_versions.get_application_version(app_id, version_id)
+        except NoSuchApplicationVersionError:
+            attach_to = 0
+        except ApplicationVersionError as e:
+            raise a.ActionError(e.message)
+        else:
+            attach_to = v.current
 
-        data_versions = yield dlc.list_data_versions(app_id)
+        try:
+            data_versions = yield datas.list_data_versions(self.gamespace, app_id, published=True)
+        except DataError as e:
+            raise a.ActionError(e.message)
 
         result = {
             "app_name": app["title"],
@@ -114,7 +137,7 @@ class ApplicationVersionController(a.AdminController):
     def render(self, data):
 
         data_versions = {
-            env["version_id"]: env["version_id"] for env in data["datas"]
+            env.version_id: env.version_id for env in data["datas"]
         }
 
         data_versions[0] = "< NONE >"
@@ -125,14 +148,14 @@ class ApplicationVersionController(a.AdminController):
                 a.link("app", data["app_name"], app_id=self.context.get("app_id"))
             ], self.context.get("version_id")),
             a.form("Application version: " + self.context.get("version_id"), fields={
-                "attach_to": a.field("Attach to data version", "select", "primary", "number", values=data_versions),
+                "attach_to": a.field("Attach to data version (should be published)",
+                                     "select", "primary", "number", values=data_versions),
             }, methods={
                 "update": a.method("Update", "primary", order=1),
                 "delete": a.method("Detach", "danger", order=2)
             }, data=data),
             a.links("Navigate", [
-                a.link("app", "Back", app_id=self.context.get("app_id")),
-                a.link("new_app_version", "Add new application version", "plus", app_id=self.context.get("app_id"))
+                a.link("app", "Back", app_id=self.context.get("app_id"))
             ])
         ]
 
@@ -154,9 +177,12 @@ class ApplicationVersionController(a.AdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        dlc = self.application.dlc
+        app_versions = self.application.app_versions
 
-        yield dlc.switch_app_version(app_id, version_id, attach_to)
+        try:
+            yield app_versions.switch_app_version(self.gamespace, app_id, version_id, attach_to)
+        except ApplicationVersionError as e:
+            raise a.ActionError(e.message)
 
         raise a.Redirect(
             "app_version",
@@ -171,27 +197,48 @@ class BundleController(a.UploadAdminController):
         self.chunks = Queue(10)
 
     @coroutine
-    def delete(self, content):
+    def delete(self, **ignored):
 
-        dlc = self.application.dlc
+        bundles = self.application.bundles
 
         app_id = self.context.get("app_id")
-        data_id = self.context.get("data_id")
         bundle_id = self.context.get("bundle_id")
 
-        data_location = self.application.data_location
+        try:
+            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle error")
+        except BundleError as e:
+            raise a.ActionError(e.message)
 
-        yield dlc.delete_bundle(app_id, data_id, bundle_id, data_location)
+        data_id = bundle.version
+
+        try:
+            yield bundles.delete_bundle(self.gamespace, app_id, bundle_id)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle error")
+        except BundleError as e:
+            raise a.ActionError(e.message)
 
         raise a.Redirect(
             "data_version",
             message="Bundle has been deleted",
-            app_id=app_id, data_id=data_id)
+            app_id=app_id,
+            data_id=data_id)
+
+    @staticmethod
+    def sizeof_fmt(num, suffix='B'):
+        for unit in ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z']:
+            if abs(num) < 1024.0:
+                return "%3.1f%s%s" % (num, unit, suffix)
+            num /= 1024.0
+        return "%.1f%s%s" % (num, 'Yi', suffix)
 
     @coroutine
-    def get(self, app_id, data_id, bundle_id):
+    def get(self, app_id, bundle_id):
 
-        dlc = self.application.dlc
+        bundles = self.application.bundles
+        datas = self.application.datas
         env_service = self.application.env_service
 
         try:
@@ -199,15 +246,28 @@ class BundleController(a.UploadAdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        bundle = yield dlc.get_bundle(data_id, bundle_id)
-
-        if bundle is None:
+        try:
+            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+        except NoSuchBundleError:
             raise a.ActionError("No such bundle")
+        except BundleError as e:
+            raise a.ActionError(e.message)
+
+        try:
+            data = yield datas.get_data_version(self.gamespace, bundle.version)
+        except NoSuchDataError:
+            raise a.ActionError("No such data")
+        except DataError as e:
+            raise a.ActionError(e.message)
 
         result = {
             "app_name": app["title"],
-            "bundle_name": bundle["bundle_name"],
-            "bundle_hash": bundle["bundle_hash"] if bundle["bundle_hash"] else "(Not uploaded yet)"
+            "bundle_name": bundle.name,
+            "bundle_status": bundle.status,
+            "data_id": bundle.version,
+            "data_status": data.status,
+            "bundle_size": BundleController.sizeof_fmt(bundle.size),
+            "bundle_hash": bundle.hash if bundle.hash else "(Not uploaded yet)"
         }
 
         raise a.Return(result)
@@ -217,20 +277,34 @@ class BundleController(a.UploadAdminController):
             a.breadcrumbs([
                 a.link("index", "Applications"),
                 a.link("app", data["app_name"], app_id=self.context.get("app_id")),
-                a.link("data_version", "Data #" + str(self.context.get("data_id")),
-                       app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
+                a.link("data_version", "Data #" + str(data["data_id"]),
+                       app_id=self.context.get("app_id"), data_id=data["data_id"])
             ], data.get("bundle_name")),
             a.file_upload("Upload contents"),
             a.form("Bundle", fields={
-                "bundle_name": a.field("Bundle name", "readonly", "primary", "non-empty"),
-                "bundle_hash": a.field("Bundle hash", "readonly", "primary", "non-empty")
+                "bundle_status": a.field("Status", "status", {
+                    BundlesModel.STATUS_CREATED: "info",
+                    BundlesModel.STATUS_UPLOADED: "success",
+                    BundlesModel.STATUS_DELIVERED: "success",
+                    BundlesModel.STATUS_ERROR: "danger",
+                    BundlesModel.STATUS_DELIVERING: "info",
+                }.get(data["bundle_status"], "Unknown"), icon={
+                    BundlesModel.STATUS_CREATED: "cog fa-spin",
+                    BundlesModel.STATUS_UPLOADED: "check",
+                    BundlesModel.STATUS_DELIVERED: "check",
+                    BundlesModel.STATUS_ERROR: "exclamation-triangle",
+                    BundlesModel.STATUS_DELIVERING: "refresh fa-spin",
+                }.get(data["bundle_status"], ""), order=1),
+                "bundle_name": a.field("Bundle name", "readonly", "primary", "non-empty", order=2),
+                "bundle_size": a.field("Bundle size", "readonly", "primary", "non-empty", order=3),
+                "bundle_hash": a.field("Bundle hash", "readonly", "primary", "non-empty", order=4)
             }, methods={
                 "delete": a.method("Delete", "danger")
-            }, data=data),
+            } if (data["data_status"] != DatasModel.STATUS_PUBLISHED) else {}, data=data),
             a.links("Navigate", [
-                a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=self.context.get("data_id")),
+                a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=data["data_id"]),
                 a.link("new_bundle", "New bundle", "plus", app_id=self.context.get("app_id"),
-                       data_id=self.context.get("data_id"))
+                       data_id=data["data_id"])
             ])
         ]
 
@@ -240,11 +314,10 @@ class BundleController(a.UploadAdminController):
     @coroutine
     def receive_started(self, filename):
 
-        dlc = self.application.dlc
+        bundles = self.application.bundles
         env_service = self.application.env_service
 
         app_id = self.context.get("app_id")
-        data_id = self.context.get("data_id")
         bundle_id = self.context.get("bundle_id")
 
         try:
@@ -252,16 +325,18 @@ class BundleController(a.UploadAdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        bundle = yield dlc.get_bundle(data_id, bundle_id)
-
-        if bundle is None:
+        try:
+            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+        except NoSuchBundleError:
             raise a.ActionError("No such bundle")
+        except BundleError as e:
+            raise a.ActionError(e.message)
 
-        data_location = self.application.data_location
-        host_location = self.application.data_host_location
+        data_id = bundle.version
 
-        IOLoop.current().spawn_callback(dlc.upload_bundle,
-            app_id, data_id, bundle["bundle_name"], data_location, host_location,
+        IOLoop.current().add_callback(
+            bundles.upload_bundle,
+            self.gamespace, app_id, data_id, bundle.name,
             self.__producer__)
 
     @coroutine
@@ -274,13 +349,11 @@ class BundleController(a.UploadAdminController):
         yield self.chunks.put(None)
 
         app_id = self.context.get("app_id")
-        data_id = self.context.get("data_id")
         bundle_id = self.context.get("bundle_id")
 
         raise a.Redirect("bundle",
                          message="Bundle has been uploaded",
                          app_id=app_id,
-                         data_id=data_id,
                          bundle_id=bundle_id)
 
     @coroutine
@@ -299,12 +372,12 @@ class DataVersionController(a.AdminController):
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
-        dlc = self.application.dlc
+        datas = self.application.datas
 
         data_location = self.application.data_location
 
         try:
-            yield dlc.delete_data_version(app_id, data_id, data_location)
+            yield datas.delete_data_version(self.gamespace, app_id, data_id, data_location)
         except VersionUsesDataError:
             raise a.ActionError("Application Version uses this data, detach the version first.")
 
@@ -314,9 +387,35 @@ class DataVersionController(a.AdminController):
             app_id=app_id)
 
     @coroutine
+    def publish(self, **ignored):
+
+        datas = self.application.datas
+        env_service = self.application.env_service
+
+        app_id = self.context.get("app_id")
+        data_id = self.context.get("data_id")
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            yield datas.publish(self.gamespace, data_id)
+        except NoSuchDataError:
+            raise a.ActionError("No such data version")
+        except DataError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect("data_version",
+                         message="Publish process has been started",
+                         app_id=app_id, data_id=data_id)
+
+    @coroutine
     def get(self, app_id, data_id):
 
-        dlc = self.application.dlc
+        bundles = self.application.bundles
+        datas = self.application.datas
         env_service = self.application.env_service
 
         try:
@@ -324,36 +423,125 @@ class DataVersionController(a.AdminController):
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
-        bundles = yield dlc.list_bundles(data_id)
+        try:
+            data = yield datas.get_data_version(self.gamespace, data_id)
+        except NoSuchDataError:
+            raise a.ActionError("No such data version")
+        except DataError as e:
+            raise a.ActionError(e.message)
+
+        try:
+            bundles = yield bundles.list_bundles(self.gamespace, data_id)
+        except BundleError as e:
+            raise a.ActionError(e.message)
 
         result = {
             "app_name": app["title"],
-            "bundles": bundles
+            "bundles": bundles,
+            "data_status": data.status + (": " + str(data.reason) if data.reason else "")
         }
 
         raise a.Return(result)
 
     def render(self, data):
-        return [
+
+        r = [
             a.breadcrumbs([
                 a.link("index", "Applications"),
                 a.link("app", data["app_name"], app_id=self.context.get("app_id"))
             ], "Data #" + str(self.context.get("data_id"))),
-            a.links("Bundles of data version: #" + str(self.context.get("data_id")), [
-                a.link("bundle", bundle["bundle_name"], "file",
-                       app_id=self.context.get("app_id"),
-                       data_id=self.context.get("data_id"),
-                       bundle_id=bundle["bundle_id"]) for bundle in data["bundles"]
-            ]),
-            a.form("Actions", fields={}, methods={
-                "delete": a.method("Delete data version", "danger")
-            }, data=data),
-            a.links("Navigate", [
-                a.link("app", "Back", app_id=self.context.get("app_id")),
-                a.link("new_bundle", "Add new bundle", "plus", app_id=self.context.get("app_id"),
-                       data_id=self.context.get("data_id"))
-            ])
+
+            a.content("Bundles of data version: #" + str(self.context.get("data_id")), headers=[
+                {
+                    "id": "name",
+                    "title": "Bundle"
+                },
+                {
+                    "id": "size",
+                    "title": "Bundle size"
+                },
+                {
+                    "id": "hash",
+                    "title": "Bundle hash"
+                },
+                {
+                    "id": "status",
+                    "title": "Status"
+                }
+            ], items=[
+                {
+                    "name": [
+                        a.link("bundle", bundle.name, "file",
+                               app_id=self.context.get("app_id"),
+                               bundle_id=bundle.bundle_id)
+                    ],
+                    "size": BundleController.sizeof_fmt(bundle.size) if bundle.size else [
+                        a.status("Empty", "info")
+                    ],
+                    "hash": bundle.hash if bundle.hash else [
+                        a.status("No hash", "info")
+                    ],
+                    "status": [
+                        a.status(bundle.status, style={
+                            BundlesModel.STATUS_CREATED: "info",
+                            BundlesModel.STATUS_UPLOADED: "success",
+                            BundlesModel.STATUS_DELIVERED: "success",
+                            BundlesModel.STATUS_ERROR: "danger",
+                            BundlesModel.STATUS_DELIVERING: "info"
+                        }.get(bundle.status, "danger"), icon={
+                            BundlesModel.STATUS_CREATED: "cog fa-spin",
+                            BundlesModel.STATUS_UPLOADED: "check",
+                            BundlesModel.STATUS_DELIVERED: "check",
+                            BundlesModel.STATUS_ERROR: "exclamation-triangle",
+                            BundlesModel.STATUS_DELIVERING: "refresh fa-spin"
+                        }.get(bundle.status, ""))
+                    ]
+                }
+                for bundle in data["bundles"]
+            ], style="primary", empty="No bundles in this data")
         ]
+
+        status = data["data_status"]
+
+        if status == DatasModel.STATUS_PUBLISHED:
+            r.extend([
+                a.form("Actions", fields={
+                    "data_status": a.field("Status", "status", "success")
+                }, methods={}, data=data),
+                a.links("Navigate", [
+                    a.link("app", "Back", app_id=self.context.get("app_id"))
+                ])
+            ])
+        else:
+            r.extend([
+                a.notice(
+                    "In order to be delivered, the data version should be published",
+                     """
+                        Once published, no bundles can be changed or deleted.
+                        To publish this data version, please press the button below.
+                     """),
+                a.form("Actions", fields={
+                    "data_status": a.field("Status", "status", {
+                        DatasModel.STATUS_CREATED: "info",
+                        DatasModel.STATUS_PUBLISHED: "success",
+                        DatasModel.STATUS_PUBLISHING: "info"
+                    }.get(data["data_status"], "danger"), icon={
+                        DatasModel.STATUS_CREATED: "cog fa-spin",
+                        DatasModel.STATUS_PUBLISHED: "check",
+                        DatasModel.STATUS_PUBLISHING: "refresh fa-spin"
+                    }.get(data["data_status"], "error"))
+                }, methods={
+                    "delete": a.method("Delete", "danger", order=1),
+                    "publish": a.method("Publish this data version", "success", order=2)
+                }, data=data),
+                a.links("Navigate", [
+                    a.link("app", "Back", app_id=self.context.get("app_id")),
+                    a.link("new_bundle", "Add new bundle", "plus", app_id=self.context.get("app_id"),
+                           data_id=self.context.get("data_id"))
+                ])
+            ])
+
+        return r
 
     def access_scopes(self):
         return ["dlc_admin"]
@@ -363,13 +551,20 @@ class NewBundleController(a.AdminController):
     @coroutine
     def get(self, app_id, data_id):
 
-        dlc = self.application.dlc
+        datas = self.application.datas
         env_service = self.application.env_service
 
         try:
             app = yield env_service.get_app_info(self.gamespace, app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
+
+        try:
+            yield datas.get_data_version(self.gamespace, data_id)
+        except DataError as e:
+            raise a.ActionError(e.message)
+        except NoSuchDataError:
+            raise a.ActionError("No such data")
 
         result = {
             "app_name": app["title"]
@@ -401,17 +596,20 @@ class NewBundleController(a.AdminController):
     @coroutine
     def create(self, bundle_name):
 
-        dlc = self.application.dlc
+        bundles = self.application.bundles
 
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
-        bundle_id = yield dlc.create_bundle(data_id, bundle_name)
+        try:
+            bundle_id = yield bundles.create_bundle(self.gamespace, data_id, bundle_name)
+        except BundleError as e:
+            raise a.ActionError(e.message)
 
         raise a.Redirect(
             "bundle",
             message="New bundle has been created",
-            app_id=app_id, data_id=data_id, bundle_id=bundle_id)
+            app_id=app_id, bundle_id=bundle_id)
 
 
 class RootAdminController(a.AdminController):
@@ -438,6 +636,141 @@ class RootAdminController(a.AdminController):
                 a.link("/environment/apps", "Edit applications", icon="mobile")
             ])
         ]
+
+    def access_scopes(self):
+        return ["dlc_admin"]
+
+
+class ApplicationSettingsController(a.AdminController):
+    @coroutine
+    def get(self, app_id):
+
+        env_service = self.application.env_service
+        apps = self.application.app_versions
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            settings = yield apps.get_application(self.gamespace, app_id)
+        except NoSuchApplicationError:
+            deployment_method = ""
+            deployment_data = {}
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+        else:
+            deployment_method = settings.deployment_method
+            deployment_data = settings.deployment_data
+
+        deployment_methods = { t: t for t in DeploymentMethods.types() }
+
+        if not deployment_method:
+            deployment_methods[""] = "< SELECT >"
+
+        result = {
+            "app_name": app["title"],
+            "deployment_methods": deployment_methods,
+            "deployment_method": deployment_method,
+            "deployment_data": deployment_data
+        }
+
+        raise a.Return(result)
+
+    @coroutine
+    def update_deployment_method(self, deployment_method):
+
+        app_id = self.context.get("app_id")
+
+        env_service = self.application.env_service
+        apps = self.application.app_versions
+
+        try:
+            yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        if not DeploymentMethods.valid(deployment_method):
+            raise a.ActionError("Not a valid deployment method")
+
+        try:
+            yield apps.update_application(self.gamespace, app_id, deployment_method, {})
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect("app_settings", message="Deployment method has been updated",
+                         app_id=app_id)
+
+    @coroutine
+    def update_deployment(self, **kwargs):
+
+        app_id = self.context.get("app_id")
+
+        env_service = self.application.env_service
+        apps = self.application.app_versions
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            settings = yield apps.get_application(self.gamespace, app_id)
+        except NoSuchApplicationError:
+            raise a.ActionError("Please select deployment method first")
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+        else:
+            deployment_method = settings.deployment_method
+            deployment_data = settings.deployment_data
+
+        m = DeploymentMethods.get(deployment_method)()
+
+        m.load(deployment_data)
+        yield m.update(**kwargs)
+
+        try:
+            yield apps.update_application(self.gamespace, app_id, deployment_method, m.dump())
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect("app_settings", message="Deployment settings have been updated",
+                         app_id=app_id)
+
+    def render(self, data):
+
+        r = [
+            a.breadcrumbs([
+                a.link("index", "Applications"),
+                a.link("app", data["app_name"], app_id=self.context.get("app_id"))
+            ], "Settings"),
+            a.form("Deployment method", fields={
+                "deployment_method": a.field(
+                    "Deployment method", "select", "primary", "non-empty", values=data["deployment_methods"]
+                )
+            }, methods={
+                "update_deployment_method": a.method("Switch deployment method", "primary")
+            }, data=data)
+        ]
+
+        deployment_method = data["deployment_method"]
+        deployment_data = data["deployment_data"]
+
+        if deployment_method:
+            m = DeploymentMethods.get(deployment_method)
+            if m.has_admin():
+                r.append(a.form("Update deployment", fields=m.render(), methods={
+                    "update_deployment": a.method("Update", "primary")
+                }, data=deployment_data))
+
+        r.extend([
+            a.links("Navigate", [
+                a.link("app", "Back", app_id=self.context.get("app_id")),
+            ])
+        ])
+
+        return r
 
     def access_scopes(self):
         return ["dlc_admin"]
