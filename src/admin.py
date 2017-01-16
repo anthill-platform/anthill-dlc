@@ -5,9 +5,12 @@ from tornado.queues import Queue
 import common.admin as a
 import base64
 import logging
+import ujson
+from common import random_string
 
 from model.data import VersionUsesDataError, DataError, NoSuchDataError, DatasModel
-from model.apps import ApplicationVersionError, NoSuchApplicationVersionError, NoSuchApplicationError, ApplicationError
+from model.apps import ApplicationVersionError, NoSuchApplicationVersionError, \
+    NoSuchApplicationError, ApplicationError, ApplicationsModel
 from model.bundle import BundleError, NoSuchBundleError, BundlesModel
 from model.deploy import DeploymentMethods, DeploymentModel
 
@@ -235,16 +238,64 @@ class BundleController(a.UploadAdminController):
         return "%.1f%s%s" % (num, 'Yi', suffix)
 
     @coroutine
-    def get(self, app_id, bundle_id):
+    def update_filters(self, bundle_filters):
 
         bundles = self.application.bundles
-        datas = self.application.datas
         env_service = self.application.env_service
+
+        app_id = self.context.get("app_id")
+        bundle_id = self.context.get("bundle_id")
+
+        try:
+            bundle_filters = ujson.loads(bundle_filters)
+        except (KeyError, ValueError):
+            raise a.ActionError("Corrupted filters")
 
         try:
             app = yield env_service.get_app_info(self.gamespace, app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
+
+        try:
+            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle")
+        except BundleError as e:
+            raise a.ActionError(e.message)
+
+        try:
+            yield bundles.update_bundle_filters(self.gamespace, bundle_id, bundle_filters)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle")
+        except BundleError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect("bundle",
+                         message="Bundle filters has been updated",
+                         app_id=app_id,
+                         bundle_id=bundle_id)
+
+    @coroutine
+    def get(self, app_id, bundle_id):
+
+        bundles = self.application.bundles
+        datas = self.application.datas
+        env_service = self.application.env_service
+        apps = self.application.app_versions
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            stt = yield apps.get_application(self.gamespace, app_id)
+        except NoSuchApplicationError:
+            filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+        else:
+            filters_scheme = stt.filters_scheme
 
         try:
             bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
@@ -267,20 +318,29 @@ class BundleController(a.UploadAdminController):
             "data_id": bundle.version,
             "data_status": data.status,
             "bundle_size": BundleController.sizeof_fmt(bundle.size),
-            "bundle_hash": bundle.hash if bundle.hash else "(Not uploaded yet)"
+            "bundle_hash": bundle.hash if bundle.hash else "(Not uploaded yet)",
+            "bundle_filters": bundle.filters,
+            "bundle_url": bundle.url if bundle.url else "(Not deployed yet)",
+            "filters_scheme": filters_scheme
         }
 
         raise a.Return(result)
 
     def render(self, data):
-        return [
+
+        r = [
             a.breadcrumbs([
                 a.link("index", "Applications"),
                 a.link("app", data["app_name"], app_id=self.context.get("app_id")),
                 a.link("data_version", "Data #" + str(data["data_id"]),
                        app_id=self.context.get("app_id"), data_id=data["data_id"])
-            ], data.get("bundle_name")),
-            a.file_upload("Upload contents"),
+            ], data.get("bundle_name"))
+        ]
+
+        if data["data_status"] != DatasModel.STATUS_PUBLISHED:
+            r.append(a.file_upload("Upload contents"))
+
+        r.extend([
             a.form("Bundle", fields={
                 "bundle_status": a.field("Status", "status", {
                     BundlesModel.STATUS_CREATED: "info",
@@ -297,16 +357,24 @@ class BundleController(a.UploadAdminController):
                 }.get(data["bundle_status"], ""), order=1),
                 "bundle_name": a.field("Bundle name", "readonly", "primary", "non-empty", order=2),
                 "bundle_size": a.field("Bundle size", "readonly", "primary", "non-empty", order=3),
-                "bundle_hash": a.field("Bundle hash", "readonly", "primary", "non-empty", order=4)
+                "bundle_hash": a.field("Bundle hash", "readonly", "primary", "non-empty", order=4),
+                "bundle_url": a.field("Bundle URL", "readonly", "primary", "non-empty", order=5)
             }, methods={
                 "delete": a.method("Delete", "danger")
             } if (data["data_status"] != DatasModel.STATUS_PUBLISHED) else {}, data=data),
+            a.form("Bundle filters", fields={
+                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"])
+            }, methods={
+                "update_filters": a.method("Update", "primary")
+            }, data=data),
             a.links("Navigate", [
                 a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=data["data_id"]),
                 a.link("new_bundle", "New bundle", "plus", app_id=self.context.get("app_id"),
                        data_id=data["data_id"])
             ])
-        ]
+        ])
+
+        return r
 
     def access_scopes(self):
         return ["dlc_admin"]
@@ -332,11 +400,9 @@ class BundleController(a.UploadAdminController):
         except BundleError as e:
             raise a.ActionError(e.message)
 
-        data_id = bundle.version
-
         IOLoop.current().add_callback(
             bundles.upload_bundle,
-            self.gamespace, app_id, data_id, bundle.name,
+            self.gamespace, app_id, bundle,
             self.__producer__)
 
     @coroutine
@@ -457,8 +523,16 @@ class DataVersionController(a.AdminController):
                     "title": "Bundle"
                 },
                 {
+                    "id": "filters",
+                    "title": "Bundle filters"
+                },
+                {
                     "id": "size",
                     "title": "Bundle size"
+                },
+                {
+                    "id": "download",
+                    "title": "Download"
                 },
                 {
                     "id": "hash",
@@ -478,8 +552,16 @@ class DataVersionController(a.AdminController):
                     "size": BundleController.sizeof_fmt(bundle.size) if bundle.size else [
                         a.status("Empty", "info")
                     ],
+                    "filters": [
+                        a.json_view(bundle.filters)
+                    ],
                     "hash": bundle.hash if bundle.hash else [
                         a.status("No hash", "info")
+                    ],
+                    "download": [
+                        a.link(bundle.url, "Download", icon="download")
+                    ] if bundle.url else [
+                        a.status("Not deployed yet", "info")
                     ],
                     "status": [
                         a.status(bundle.status, style={
@@ -552,12 +634,22 @@ class NewBundleController(a.AdminController):
     def get(self, app_id, data_id):
 
         datas = self.application.datas
+        apps = self.application.app_versions
         env_service = self.application.env_service
 
         try:
             app = yield env_service.get_app_info(self.gamespace, app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
+
+        try:
+            stt = yield apps.get_application(self.gamespace, app_id)
+        except NoSuchApplicationError:
+            filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+        else:
+            filters_scheme = stt.filters_scheme
 
         try:
             yield datas.get_data_version(self.gamespace, data_id)
@@ -567,7 +659,8 @@ class NewBundleController(a.AdminController):
             raise a.ActionError("No such data")
 
         result = {
-            "app_name": app["title"]
+            "app_name": app["title"],
+            "filters_scheme": filters_scheme
         }
 
         raise a.Return(result)
@@ -581,7 +674,8 @@ class NewBundleController(a.AdminController):
                        app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
             ], "New bundle"),
             a.form("Create a new bundle", fields={
-                "bundle_name": a.field("Bundle name", "text", "primary", "non-empty"),
+                "bundle_name": a.field("Bundle name", "text", "primary", "non-empty", order=1),
+                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"], order=2)
             }, methods={
                 "create": a.method("Create", "primary")
             }, data=data),
@@ -594,15 +688,22 @@ class NewBundleController(a.AdminController):
         return ["dlc_admin"]
 
     @coroutine
-    def create(self, bundle_name):
+    def create(self, bundle_name, bundle_filters):
 
         bundles = self.application.bundles
+
+        try:
+            bundle_filters = ujson.loads(bundle_filters)
+        except (KeyError, ValueError):
+            raise a.ActionError("Corrupted bundle filters")
 
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
+        bundle_key = random_string(32)
+
         try:
-            bundle_id = yield bundles.create_bundle(self.gamespace, data_id, bundle_name)
+            bundle_id = yield bundles.create_bundle(self.gamespace, data_id, bundle_name, bundle_filters, bundle_key)
         except BundleError as e:
             raise a.ActionError(e.message)
 
@@ -658,11 +759,13 @@ class ApplicationSettingsController(a.AdminController):
         except NoSuchApplicationError:
             deployment_method = ""
             deployment_data = {}
+            filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
         except ApplicationError as e:
             raise a.ActionError(e.message)
         else:
             deployment_method = settings.deployment_method
             deployment_data = settings.deployment_data
+            filters_scheme = settings.filters_scheme
 
         deployment_methods = { t: t for t in DeploymentMethods.types() }
 
@@ -673,7 +776,8 @@ class ApplicationSettingsController(a.AdminController):
             "app_name": app["title"],
             "deployment_methods": deployment_methods,
             "deployment_method": deployment_method,
-            "deployment_data": deployment_data
+            "deployment_data": deployment_data,
+            "filters_scheme": filters_scheme
         }
 
         raise a.Return(result)
@@ -695,7 +799,16 @@ class ApplicationSettingsController(a.AdminController):
             raise a.ActionError("Not a valid deployment method")
 
         try:
-            yield apps.update_application(self.gamespace, app_id, deployment_method, {})
+            stt = yield apps.get_application(self.gamespace, app_id)
+        except NoSuchApplicationError:
+            deployment_data = {}
+            filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
+        else:
+            deployment_data = stt.deployment_data
+            filters_scheme = stt.filters_scheme
+
+        try:
+            yield apps.update_application(self.gamespace, app_id, deployment_method, deployment_data, filters_scheme)
         except ApplicationError as e:
             raise a.ActionError(e.message)
 
@@ -724,6 +837,7 @@ class ApplicationSettingsController(a.AdminController):
         else:
             deployment_method = settings.deployment_method
             deployment_data = settings.deployment_data
+            filters_scheme = settings.filters_scheme
 
         m = DeploymentMethods.get(deployment_method)()
 
@@ -731,7 +845,43 @@ class ApplicationSettingsController(a.AdminController):
         yield m.update(**kwargs)
 
         try:
-            yield apps.update_application(self.gamespace, app_id, deployment_method, m.dump())
+            yield apps.update_application(self.gamespace, app_id, deployment_method, m.dump(), filters_scheme)
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect("app_settings", message="Deployment settings have been updated",
+                         app_id=app_id)
+
+    @coroutine
+    def update_scheme(self, filters_scheme):
+
+        app_id = self.context.get("app_id")
+
+        env_service = self.application.env_service
+        apps = self.application.app_versions
+
+        try:
+            filters_scheme = ujson.loads(filters_scheme)
+        except (KeyError, ValueError):
+            raise a.ActionError("Corrupted filters scheme")
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            settings = yield apps.get_application(self.gamespace, app_id)
+        except NoSuchApplicationError:
+            raise a.ActionError("Please select deployment method first")
+        except ApplicationError as e:
+            raise a.ActionError(e.message)
+        else:
+            deployment_method = settings.deployment_method
+            deployment_data = settings.deployment_data
+
+        try:
+            yield apps.update_application(self.gamespace, app_id, deployment_method, deployment_data, filters_scheme)
         except ApplicationError as e:
             raise a.ActionError(e.message)
 
@@ -760,9 +910,23 @@ class ApplicationSettingsController(a.AdminController):
         if deployment_method:
             m = DeploymentMethods.get(deployment_method)
             if m.has_admin():
-                r.append(a.form("Update deployment", fields=m.render(), methods={
+                r.append(a.form("Update deployment", fields=m.render(a), methods={
                     "update_deployment": a.method("Update", "primary")
                 }, data=deployment_data))
+
+            r.append(a.form("Update filters scheme", fields={
+                "filters_scheme": a.field("""
+                    This scheme is used to define list of possible filters for each bundle for this application.
+                """, "json", "primary", "non-empty", height="1000")
+            }, methods={
+                "update_scheme": a.method("Update", "primary")
+            }, data=data))
+        else:
+            r.append(a.notice(
+                "Please select deployment method",
+                """
+                    To edit filters scheme, please select the deployment method above
+                """))
 
         r.extend([
             a.links("Navigate", [

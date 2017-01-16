@@ -44,9 +44,112 @@ class ApplicationAdapter(object):
         self.gamespace_id = data.get("gamespace_id")
         self.deployment_method = data.get("deployment_method")
         self.deployment_data = data.get("deployment_data")
+        self.filters_scheme = data.get("filters_scheme", ApplicationsModel.DEFAULT_FILTERS_SCHEME)
 
 
 class ApplicationsModel(Model):
+
+    DEFAULT_FILTERS_SCHEME = {
+        "type": "object",
+        "title": "Bundle Filters",
+        "options": {
+            "disable_edit_json": True,
+            "disable_properties": True
+        },
+        "properties": {
+            "architecture": {
+                "type": "object",
+                "title": "Architecture",
+                "options": {
+                    "disable_edit_json": True,
+                    "disable_properties": True
+                },
+                "properties": {
+                    "x86": {
+                        "type": "boolean",
+                        "title": "x86",
+                        "format": "checkbox",
+                        "propertyOrder": 1,
+                        "default": True
+                    },
+                    "x64": {
+                        "type": "boolean",
+                        "title": "x64",
+                        "format": "checkbox",
+                        "propertyOrder": 2,
+                        "default": True
+                    },
+                    "armv7": {
+                        "type": "boolean",
+                        "title": "armv7",
+                        "format": "checkbox",
+                        "propertyOrder": 3,
+                        "default": True
+                    },
+                    "armv7s": {
+                        "type": "boolean",
+                        "title": "armv7s",
+                        "format": "checkbox",
+                        "propertyOrder": 4,
+                        "default": True
+                    },
+                    "arm64": {
+                        "type": "boolean",
+                        "title": "arm64",
+                        "format": "checkbox",
+                        "propertyOrder": 5,
+                        "default": True
+                    }
+                }
+            },
+            "os": {
+                "type": "object",
+                "title": "Operation System",
+                "options": {
+                    "disable_edit_json": True,
+                    "disable_properties": True
+                },
+                "properties": {
+                    "windows": {
+                        "type": "boolean",
+                        "title": "Windows",
+                        "format": "checkbox",
+                        "propertyOrder": 1,
+                        "default": True
+                    },
+                    "linux": {
+                        "type": "boolean",
+                        "title": "Linux",
+                        "format": "checkbox",
+                        "propertyOrder": 2,
+                        "default": True
+                    },
+                    "mac": {
+                        "type": "boolean",
+                        "title": "Mac OS X",
+                        "format": "checkbox",
+                        "propertyOrder": 3,
+                        "default": True
+                    },
+                    "ios": {
+                        "type": "boolean",
+                        "title": "iOS",
+                        "format": "checkbox",
+                        "propertyOrder": 4,
+                        "default": True
+                    },
+                    "android": {
+                        "type": "boolean",
+                        "title": "Android",
+                        "format": "checkbox",
+                        "propertyOrder": 5,
+                        "default": True
+                    }
+                }
+            }
+        }
+    }
+
     def __init__(self, db):
         self.db = db
 
@@ -162,22 +265,27 @@ class ApplicationsModel(Model):
         raise Return(ApplicationAdapter(application_version))
 
     @coroutine
-    def update_application(self, gamespace_id, app_id, deployment_method, deployment_data):
+    def update_application(self, gamespace_id, app_id, deployment_method, deployment_data, filters_scheme):
 
         if not isinstance(deployment_data, dict):
             raise ApplicationError("deployment_data should be a dict")
 
+        if not isinstance(filters_scheme, dict):
+            raise ApplicationError("filters_scheme should be a dict")
+
         deployment_data = ujson.dumps(deployment_data)
+        filters_scheme = ujson.dumps(filters_scheme)
 
         try:
             yield self.db.insert(
                 """
                 INSERT INTO `applications`
-                (`application_name`, `deployment_method`, `deployment_data`, `gamespace_id`)
-                VALUES (%s, %s, %s, %s)
+                (`application_name`, `deployment_method`, `deployment_data`, `gamespace_id`, `filters_scheme`)
+                VALUES (%s, %s, %s, %s, %s)
                 ON DUPLICATE KEY
-                UPDATE `deployment_method`=%s, `deployment_data`=%s;
-                """, app_id, deployment_method, deployment_data, gamespace_id, deployment_method, deployment_data)
+                UPDATE `deployment_method`=%s, `deployment_data`=%s, `filters_scheme`=%s;
+                """, app_id, deployment_method, deployment_data, gamespace_id, filters_scheme,
+                deployment_method, deployment_data, filters_scheme)
         except DatabaseError as e:
             raise ApplicationError("Failed to switch app version: " + e.args[1])
 

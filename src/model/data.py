@@ -177,7 +177,8 @@ class DatasModel(Model):
             raise DataError("No bundles to publish")
 
         for bundle in bundles:
-            if bundle.status not in [BundlesModel.STATUS_UPLOADED, BundlesModel.STATUS_DELIVERED]:
+            if bundle.status not in [BundlesModel.STATUS_ERROR, BundlesModel.STATUS_UPLOADED,
+                                     BundlesModel.STATUS_DELIVERED]:
                 raise DataError("Bundle {0} in not uploaded yet".format(bundle.name))
 
         yield self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_PUBLISHING, "")
