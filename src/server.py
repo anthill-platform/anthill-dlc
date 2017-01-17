@@ -45,7 +45,7 @@ class DLCServer(common.server.Server):
         self.env_service = common.environment.EnvironmentClient(self.cache)
 
     def get_models(self):
-        return [self.bundles, self.datas, self.app_versions, self.deployment]
+        return [self.app_versions, self.datas, self.bundles, self.deployment]
 
     def get_admin(self):
         return {
