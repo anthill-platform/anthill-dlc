@@ -144,6 +144,8 @@ class BundlesModel(Model):
     STATUS_DELIVERED = "DELIVERED"
     STATUS_ERROR = "ERROR"
 
+    HASH_METHOD = hashlib.sha256
+
     def __init__(self, db):
         self.db = db
         self.data_location = options.data_location
@@ -326,7 +328,7 @@ class BundlesModel(Model):
 
         bundle_file = self.bundle_path(app_id, data_id, bundle)
 
-        md5 = hashlib.md5()
+        _h = BundlesModel.HASH_METHOD()
         output_file = open(bundle_file, 'wb')
 
         class Size:
@@ -335,14 +337,14 @@ class BundlesModel(Model):
         @coroutine
         def write(data):
             output_file.write(data)
-            md5.update(data)
+            _h.update(data)
             Size.bundle_size += len(data)
 
         yield producer(write)
 
         output_file.close()
 
-        bundle_hash = md5.hexdigest()
+        bundle_hash = _h.hexdigest()
 
         yield self.update_bundle(
             gamespace_id, bundle_id, bundle_hash, BundlesModel.STATUS_UPLOADED, Size.bundle_size)

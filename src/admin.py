@@ -536,7 +536,7 @@ class DataVersionController(a.AdminController):
                 },
                 {
                     "id": "hash",
-                    "title": "Bundle hash"
+                    "title": "Bundle hash (last 24 chars)"
                 },
                 {
                     "id": "status",
@@ -555,7 +555,7 @@ class DataVersionController(a.AdminController):
                     "filters": [
                         a.json_view(bundle.filters)
                     ],
-                    "hash": bundle.hash if bundle.hash else [
+                    "hash": bundle.hash[-24:] if bundle.hash else [
                         a.status("No hash", "info")
                     ],
                     "download": [
