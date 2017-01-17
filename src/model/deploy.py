@@ -101,7 +101,8 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
             f.write("\n")
 
         try:
-            retcode = call(["rsync -avz --chmod=u=rwX,g=rX -e 'ssh -i {0}' {1} {2}@{3}:zones/{4}/{5}/".format(
+            retcode = call(["rsync -avz --chmod=u=rwX,g=rX "
+                            "-e 'ssh -i {0} -o StrictHostKeyChecking=no' {1} {2}@{3}:zones/{4}/{5}/".format(
                 path,
                 bundle_path,
                 self.login,
