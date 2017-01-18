@@ -44,14 +44,13 @@ class AppVersionHandler(JsonHandler):
         except BundleQueryError as e:
             raise HTTPError(500, e.message)
 
-        result = {}
-
-        for bundle in bundles:
-            result[bundle.name] = {
-                "hash": bundle.hash,
-                "url": bundle.url,
-                "size": bundle.size,
-                "payload": bundle.payload
+        self.dumps({
+            "bundles": {
+                bundle.name: {
+                    "hash": bundle.hash,
+                    "url": bundle.url,
+                    "size": bundle.size,
+                    "payload": bundle.payload
+                } for bundle in bundles
             }
-
-        self.dumps(result)
+        })
