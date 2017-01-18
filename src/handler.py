@@ -50,7 +50,8 @@ class AppVersionHandler(JsonHandler):
             result[bundle.name] = {
                 "hash": bundle.hash,
                 "url": bundle.url,
-                "size": bundle.size
+                "size": bundle.size,
+                "payload": bundle.payload
             }
 
         self.dumps(result)

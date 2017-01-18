@@ -9,6 +9,7 @@ from common.options import options
 import ujson
 from common import random_string
 
+
 class BundleError(Exception):
     def __init__(self, message):
         self.message = message
@@ -35,6 +36,7 @@ class BundleAdapter(object):
         self.status = data["bundle_status"]
         self.size = data["bundle_size"]
         self.filters = data.get("bundle_filters", {})
+        self.payload = data.get("bundle_payload", {})
         self.key = data.get("bundle_key", "")
 
     def get_key(self):
@@ -231,10 +233,13 @@ class BundlesModel(Model):
         raise Return(map(BundleAdapter, bundles))
 
     @coroutine
-    def create_bundle(self, gamespace_id, data_id, bundle_name, bundle_filters, bundle_key):
+    def create_bundle(self, gamespace_id, data_id, bundle_name, bundle_filters, bundle_payload, bundle_key):
 
         if not isinstance(bundle_filters, dict):
             raise BundleError("bundle_filters should be a dict")
+
+        if not isinstance(bundle_payload, dict):
+            raise BundleError("bundle_payload should be a dict")
 
         try:
             yield self.find_bundle(gamespace_id, data_id, bundle_name)
@@ -247,17 +252,18 @@ class BundlesModel(Model):
             bundle_id = yield self.db.insert(
                 """
                 INSERT INTO `bundles`
-                (`version_id`, `gamespace_id`, `bundle_name`, `bundle_status`, `bundle_filters`, `bundle_key`)
-                VALUES (%s, %s, %s, %s, %s, %s);
+                (`version_id`, `gamespace_id`, `bundle_name`, `bundle_status`,
+                    `bundle_filters`, `bundle_payload`, `bundle_key`)
+                VALUES (%s, %s, %s, %s, %s, %s, %s);
                 """, data_id, gamespace_id, bundle_name, BundlesModel.STATUS_CREATED,
-                ujson.dumps(bundle_filters), bundle_key)
+                ujson.dumps(bundle_filters), ujson.dumps(bundle_payload), bundle_key)
         except DatabaseError as e:
             raise BundleError("Failed to create bundle: " + e.args[1])
 
         raise Return(bundle_id)
 
     @coroutine
-    def update_bundle_filters(self, gamespace_id, bundle_id, bundle_filters):
+    def update_bundle_properties(self, gamespace_id, bundle_id, bundle_filters, bundle_payload):
 
         if not isinstance(bundle_filters, dict):
             raise BundleError("bundle_filters should be a dict")
@@ -266,9 +272,9 @@ class BundlesModel(Model):
             yield self.db.execute(
                 """
                 UPDATE `bundles`
-                SET `bundle_filters`=%s
+                SET `bundle_filters`=%s, `bundle_payload`=%s
                 WHERE `bundle_id`=%s AND `gamespace_id`=%s;
-                """, ujson.dumps(bundle_filters), bundle_id, gamespace_id)
+                """, ujson.dumps(bundle_filters), ujson.dumps(bundle_payload), bundle_id, gamespace_id)
         except DatabaseError as e:
             raise BundleError("Failed to update bundle: " + e.args[1])
 

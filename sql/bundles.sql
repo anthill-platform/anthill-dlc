@@ -9,6 +9,7 @@ CREATE TABLE `bundles` (
   `bundle_hash` varchar(64) DEFAULT NULL,
   `bundle_status` enum('CREATED','UPLOADED','DELIVERING','DELIVERED','ERROR') NOT NULL DEFAULT 'CREATED',
   `bundle_filters` json NOT NULL,
+  `bundle_payload` json NOT NULL,
   PRIMARY KEY (`bundle_id`),
   KEY `version_idx` (`version_id`),
   CONSTRAINT `bundles_ibfk_1` FOREIGN KEY (`version_id`) REFERENCES `data_versions` (`version_id`)

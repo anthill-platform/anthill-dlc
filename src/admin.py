@@ -238,7 +238,7 @@ class BundleController(a.UploadAdminController):
         return "%.1f%s%s" % (num, 'Yi', suffix)
 
     @coroutine
-    def update_filters(self, bundle_filters):
+    def update_properties(self, bundle_filters, bundle_payload):
 
         bundles = self.application.bundles
         env_service = self.application.env_service
@@ -250,6 +250,11 @@ class BundleController(a.UploadAdminController):
             bundle_filters = ujson.loads(bundle_filters)
         except (KeyError, ValueError):
             raise a.ActionError("Corrupted filters")
+
+        try:
+            bundle_payload = ujson.loads(bundle_payload)
+        except (KeyError, ValueError):
+            raise a.ActionError("Corrupted payload")
 
         try:
             app = yield env_service.get_app_info(self.gamespace, app_id)
@@ -264,7 +269,7 @@ class BundleController(a.UploadAdminController):
             raise a.ActionError(e.message)
 
         try:
-            yield bundles.update_bundle_filters(self.gamespace, bundle_id, bundle_filters)
+            yield bundles.update_bundle_properties(self.gamespace, bundle_id, bundle_filters, bundle_payload)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle")
         except BundleError as e:
@@ -292,10 +297,12 @@ class BundleController(a.UploadAdminController):
             stt = yield apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
+            payload_scheme = ApplicationsModel.DEFAULT_PAYLOAD_SCHEME
         except ApplicationError as e:
             raise a.ActionError(e.message)
         else:
             filters_scheme = stt.filters_scheme
+            payload_scheme = stt.payload_scheme
 
         try:
             bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
@@ -320,8 +327,10 @@ class BundleController(a.UploadAdminController):
             "bundle_size": BundleController.sizeof_fmt(bundle.size),
             "bundle_hash": bundle.hash if bundle.hash else "(Not uploaded yet)",
             "bundle_filters": bundle.filters,
+            "bundle_payload": bundle.payload,
             "bundle_url": bundle.url if bundle.url else "(Not deployed yet)",
-            "filters_scheme": filters_scheme
+            "filters_scheme": filters_scheme,
+            "payload_scheme": payload_scheme
         }
 
         raise a.Return(result)
@@ -362,10 +371,11 @@ class BundleController(a.UploadAdminController):
             }, methods={
                 "delete": a.method("Delete", "danger")
             } if (data["data_status"] != DatasModel.STATUS_PUBLISHED) else {}, data=data),
-            a.form("Bundle filters", fields={
-                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"])
+            a.form("Bundle properies", fields={
+                "bundle_payload": a.field("Bundle payload", "dorn", "primary", schema=data["payload_scheme"], order=1),
+                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"], order=2)
             }, methods={
-                "update_filters": a.method("Update", "primary")
+                "update_properties": a.method("Update", "primary")
             }, data=data),
             a.links("Navigate", [
                 a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=data["data_id"]),
@@ -646,10 +656,12 @@ class NewBundleController(a.AdminController):
             stt = yield apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
+            payload_scheme = ApplicationsModel.DEFAULT_PAYLOAD_SCHEME
         except ApplicationError as e:
             raise a.ActionError(e.message)
         else:
             filters_scheme = stt.filters_scheme
+            payload_scheme = stt.payload_scheme
 
         try:
             yield datas.get_data_version(self.gamespace, data_id)
@@ -660,7 +672,8 @@ class NewBundleController(a.AdminController):
 
         result = {
             "app_name": app["title"],
-            "filters_scheme": filters_scheme
+            "filters_scheme": filters_scheme,
+            "payload_scheme": payload_scheme
         }
 
         raise a.Return(result)
@@ -675,7 +688,8 @@ class NewBundleController(a.AdminController):
             ], "New bundle"),
             a.form("Create a new bundle", fields={
                 "bundle_name": a.field("Bundle name", "text", "primary", "non-empty", order=1),
-                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"], order=2)
+                "bundle_payload": a.field("Bundle payload", "dorn", "primary", schema=data["payload_scheme"], order=2),
+                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"], order=3)
             }, methods={
                 "create": a.method("Create", "primary")
             }, data=data),
@@ -688,7 +702,7 @@ class NewBundleController(a.AdminController):
         return ["dlc_admin"]
 
     @coroutine
-    def create(self, bundle_name, bundle_filters):
+    def create(self, bundle_name, bundle_filters, bundle_payload):
 
         bundles = self.application.bundles
 
@@ -697,13 +711,21 @@ class NewBundleController(a.AdminController):
         except (KeyError, ValueError):
             raise a.ActionError("Corrupted bundle filters")
 
+        try:
+            bundle_payload = ujson.loads(bundle_payload)
+        except (KeyError, ValueError):
+            raise a.ActionError("Corrupted bundle payload")
+
+
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
         bundle_key = random_string(32)
 
         try:
-            bundle_id = yield bundles.create_bundle(self.gamespace, data_id, bundle_name, bundle_filters, bundle_key)
+            bundle_id = yield bundles.create_bundle(
+                self.gamespace, data_id, bundle_name,
+                bundle_filters, bundle_payload, bundle_key)
         except BundleError as e:
             raise a.ActionError(e.message)
 
@@ -759,6 +781,7 @@ class ApplicationSettingsController(a.AdminController):
         except NoSuchApplicationError:
             deployment_method = ""
             deployment_data = {}
+            payload_scheme = ApplicationsModel.DEFAULT_PAYLOAD_SCHEME
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
         except ApplicationError as e:
             raise a.ActionError(e.message)
@@ -766,6 +789,7 @@ class ApplicationSettingsController(a.AdminController):
             deployment_method = settings.deployment_method
             deployment_data = settings.deployment_data
             filters_scheme = settings.filters_scheme
+            payload_scheme = settings.payload_scheme
 
         deployment_methods = { t: t for t in DeploymentMethods.types() }
 
@@ -777,7 +801,8 @@ class ApplicationSettingsController(a.AdminController):
             "deployment_methods": deployment_methods,
             "deployment_method": deployment_method,
             "deployment_data": deployment_data,
-            "filters_scheme": filters_scheme
+            "filters_scheme": filters_scheme,
+            "payload_scheme": payload_scheme
         }
 
         raise a.Return(result)
@@ -803,12 +828,16 @@ class ApplicationSettingsController(a.AdminController):
         except NoSuchApplicationError:
             deployment_data = {}
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
+            payload_scheme = ApplicationsModel.DEFAULT_PAYLOAD_SCHEME
         else:
             deployment_data = stt.deployment_data
             filters_scheme = stt.filters_scheme
+            payload_scheme = stt.payload_scheme
 
         try:
-            yield apps.update_application(self.gamespace, app_id, deployment_method, deployment_data, filters_scheme)
+            yield apps.update_application(
+                self.gamespace, app_id, deployment_method,
+                deployment_data, filters_scheme, payload_scheme)
         except ApplicationError as e:
             raise a.ActionError(e.message)
 
@@ -838,6 +867,7 @@ class ApplicationSettingsController(a.AdminController):
             deployment_method = settings.deployment_method
             deployment_data = settings.deployment_data
             filters_scheme = settings.filters_scheme
+            payload_scheme = settings.payload_scheme
 
         m = DeploymentMethods.get(deployment_method)()
 
@@ -845,7 +875,9 @@ class ApplicationSettingsController(a.AdminController):
         yield m.update(**kwargs)
 
         try:
-            yield apps.update_application(self.gamespace, app_id, deployment_method, m.dump(), filters_scheme)
+            yield apps.update_application(
+                self.gamespace, app_id, deployment_method,
+                m.dump(), filters_scheme, payload_scheme)
         except ApplicationError as e:
             raise a.ActionError(e.message)
 
@@ -853,7 +885,7 @@ class ApplicationSettingsController(a.AdminController):
                          app_id=app_id)
 
     @coroutine
-    def update_scheme(self, filters_scheme):
+    def update_scheme(self, filters_scheme, payload_scheme):
 
         app_id = self.context.get("app_id")
 
@@ -864,6 +896,11 @@ class ApplicationSettingsController(a.AdminController):
             filters_scheme = ujson.loads(filters_scheme)
         except (KeyError, ValueError):
             raise a.ActionError("Corrupted filters scheme")
+
+        try:
+            payload_scheme = ujson.loads(payload_scheme)
+        except (KeyError, ValueError):
+            raise a.ActionError("Corrupted payload scheme")
 
         try:
             app = yield env_service.get_app_info(self.gamespace, app_id)
@@ -881,7 +918,9 @@ class ApplicationSettingsController(a.AdminController):
             deployment_data = settings.deployment_data
 
         try:
-            yield apps.update_application(self.gamespace, app_id, deployment_method, deployment_data, filters_scheme)
+            yield apps.update_application(
+                self.gamespace, app_id, deployment_method,
+                deployment_data, filters_scheme, payload_scheme)
         except ApplicationError as e:
             raise a.ActionError(e.message)
 
@@ -914,10 +953,13 @@ class ApplicationSettingsController(a.AdminController):
                     "update_deployment": a.method("Update", "primary")
                 }, data=deployment_data))
 
-            r.append(a.form("Update filters scheme", fields={
+            r.append(a.form("Update schemes", fields={
+                "payload_scheme": a.field("""
+                    This scheme is used to define custom attributes for each bundle.
+                """, "json", "primary", "non-empty", height="500", order=1),
                 "filters_scheme": a.field("""
                     This scheme is used to define list of possible filters for each bundle for this application.
-                """, "json", "primary", "non-empty", height="1000")
+                """, "json", "primary", "non-empty", height="500", order=2)
             }, methods={
                 "update_scheme": a.method("Update", "primary")
             }, data=data))

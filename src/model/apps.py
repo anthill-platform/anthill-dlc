@@ -45,9 +45,22 @@ class ApplicationAdapter(object):
         self.deployment_method = data.get("deployment_method")
         self.deployment_data = data.get("deployment_data")
         self.filters_scheme = data.get("filters_scheme", ApplicationsModel.DEFAULT_FILTERS_SCHEME)
+        self.payload_scheme = data.get("payload_scheme", {})
 
 
 class ApplicationsModel(Model):
+
+    DEFAULT_PAYLOAD_SCHEME = {
+        "type": "object",
+        "options": {
+            "disable_edit_json": True,
+            "disable_properties": True
+        },
+        "title": "Custom Attributes",
+        "properties": {
+
+        }
+    }
 
     DEFAULT_FILTERS_SCHEME = {
         "type": "object",
@@ -265,7 +278,8 @@ class ApplicationsModel(Model):
         raise Return(ApplicationAdapter(application_version))
 
     @coroutine
-    def update_application(self, gamespace_id, app_id, deployment_method, deployment_data, filters_scheme):
+    def update_application(self, gamespace_id, app_id, deployment_method,
+                           deployment_data, filters_scheme, payload_scheme):
 
         if not isinstance(deployment_data, dict):
             raise ApplicationError("deployment_data should be a dict")
@@ -273,19 +287,24 @@ class ApplicationsModel(Model):
         if not isinstance(filters_scheme, dict):
             raise ApplicationError("filters_scheme should be a dict")
 
+        if not isinstance(payload_scheme, dict):
+            raise ApplicationError("payload_scheme should be a dict")
+
         deployment_data = ujson.dumps(deployment_data)
         filters_scheme = ujson.dumps(filters_scheme)
+        payload_scheme = ujson.dumps(payload_scheme)
 
         try:
             yield self.db.insert(
                 """
                 INSERT INTO `applications`
-                (`application_name`, `deployment_method`, `deployment_data`, `gamespace_id`, `filters_scheme`)
-                VALUES (%s, %s, %s, %s, %s)
+                (`application_name`, `deployment_method`, `deployment_data`, `gamespace_id`,
+                    `filters_scheme`, `payload_scheme`)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY
-                UPDATE `deployment_method`=%s, `deployment_data`=%s, `filters_scheme`=%s;
-                """, app_id, deployment_method, deployment_data, gamespace_id, filters_scheme,
-                deployment_method, deployment_data, filters_scheme)
+                UPDATE `deployment_method`=%s, `deployment_data`=%s, `filters_scheme`=%s, `payload_scheme`=%s;
+                """, app_id, deployment_method, deployment_data, gamespace_id, filters_scheme, payload_scheme,
+                deployment_method, deployment_data, filters_scheme, payload_scheme)
         except DatabaseError as e:
             raise ApplicationError("Failed to switch app version: " + e.args[1])
 
