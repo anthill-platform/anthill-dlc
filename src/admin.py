@@ -11,7 +11,7 @@ from common import random_string
 from model.data import VersionUsesDataError, DataError, NoSuchDataError, DatasModel
 from model.apps import ApplicationVersionError, NoSuchApplicationVersionError, \
     NoSuchApplicationError, ApplicationError, ApplicationsModel
-from model.bundle import BundleError, NoSuchBundleError, BundlesModel
+from model.bundle import BundleError, NoSuchBundleError, BundlesModel, BundleQueryError
 from model.deploy import DeploymentMethods, DeploymentModel
 
 from common.environment import AppNotFound
@@ -66,9 +66,9 @@ class ApplicationController(a.AdminController):
                        version_id=v_name) for v_name, v_id in data["versions"].iteritems()
             ]),
             a.links("Data versions", [
-                a.link("data_version", str(d.version_id), "folder",
+                a.link("data_version", str(d.data_id), "folder",
                        app_id=self.context.get("app_id"),
-                       data_id=d.version_id)
+                       data_id=d.data_id)
                 for d in data["datas"]
             ]),
             a.form("Actions", fields={}, methods={
@@ -140,7 +140,7 @@ class ApplicationVersionController(a.AdminController):
     def render(self, data):
 
         data_versions = {
-            env.version_id: env.version_id for env in data["datas"]
+            env.data_id: env.data_id for env in data["datas"]
         }
 
         data_versions[0] = "< NONE >"
@@ -200,12 +200,14 @@ class BundleController(a.UploadAdminController):
         self.chunks = Queue(10)
 
     @coroutine
-    def delete(self, **ignored):
+    def detach(self, **ignored):
 
         bundles = self.application.bundles
+        datas = self.application.datas
 
         app_id = self.context.get("app_id")
         bundle_id = self.context.get("bundle_id")
+        data_id = self.context.get("data_id")
 
         try:
             bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
@@ -214,7 +216,49 @@ class BundleController(a.UploadAdminController):
         except BundleError as e:
             raise a.ActionError(e.message)
 
-        data_id = bundle.version
+        try:
+            yield datas.get_data_version(self.gamespace, data_id)
+        except NoSuchDataError:
+            raise a.ActionError("No such data version")
+        except DataError as e:
+            raise a.ActionError(e.message)
+
+        try:
+            yield bundles.detach_bundle(self.gamespace, bundle_id, data_id)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle error")
+        except BundleError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect(
+            "data_version",
+            message="Bundle has been detached",
+            app_id=app_id,
+            data_id=data_id)
+
+    @coroutine
+    def delete(self, **ignored):
+
+        datas = self.application.datas
+        bundles = self.application.bundles
+
+        app_id = self.context.get("app_id")
+        bundle_id = self.context.get("bundle_id")
+        data_id = self.context.get("data_id")
+
+        try:
+            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle error")
+        except BundleError as e:
+            raise a.ActionError(e.message)
+
+        try:
+            yield datas.get_data_version(self.gamespace, data_id)
+        except NoSuchDataError:
+            raise a.ActionError("No such data version")
+        except DataError as e:
+            raise a.ActionError(e.message)
 
         try:
             yield bundles.delete_bundle(self.gamespace, app_id, bundle_id)
@@ -240,11 +284,13 @@ class BundleController(a.UploadAdminController):
     @coroutine
     def update_properties(self, bundle_filters, bundle_payload):
 
+        datas = self.application.datas
         bundles = self.application.bundles
         env_service = self.application.env_service
 
         app_id = self.context.get("app_id")
         bundle_id = self.context.get("bundle_id")
+        data_id = self.context.get("data_id")
 
         try:
             bundle_filters = ujson.loads(bundle_filters)
@@ -269,6 +315,13 @@ class BundleController(a.UploadAdminController):
             raise a.ActionError(e.message)
 
         try:
+            yield datas.get_data_version(self.gamespace, data_id)
+        except NoSuchDataError:
+            raise a.ActionError("No such data version")
+        except DataError as e:
+            raise a.ActionError(e.message)
+
+        try:
             yield bundles.update_bundle_properties(self.gamespace, bundle_id, bundle_filters, bundle_payload)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle")
@@ -278,10 +331,11 @@ class BundleController(a.UploadAdminController):
         raise a.Redirect("bundle",
                          message="Bundle filters has been updated",
                          app_id=app_id,
-                         bundle_id=bundle_id)
+                         bundle_id=bundle_id,
+                         data_id=data_id)
 
     @coroutine
-    def get(self, app_id, bundle_id):
+    def get(self, app_id, bundle_id, data_id):
 
         bundles = self.application.bundles
         datas = self.application.datas
@@ -305,24 +359,23 @@ class BundleController(a.UploadAdminController):
             payload_scheme = stt.payload_scheme
 
         try:
-            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
-        except NoSuchBundleError:
-            raise a.ActionError("No such bundle")
-        except BundleError as e:
+            data = yield datas.get_data_version(self.gamespace, data_id)
+        except NoSuchDataError:
+            raise a.ActionError("No such data version")
+        except DataError as e:
             raise a.ActionError(e.message)
 
         try:
-            data = yield datas.get_data_version(self.gamespace, bundle.version)
-        except NoSuchDataError:
-            raise a.ActionError("No such data")
-        except DataError as e:
+            bundle = yield bundles.get_bundle(self.gamespace, bundle_id, data_id)
+        except NoSuchBundleError:
+            raise a.ActionError("No such bundle")
+        except BundleError as e:
             raise a.ActionError(e.message)
 
         result = {
             "app_name": app["title"],
             "bundle_name": bundle.name,
             "bundle_status": bundle.status,
-            "data_id": bundle.version,
             "data_status": data.status,
             "bundle_size": BundleController.sizeof_fmt(bundle.size),
             "bundle_hash": bundle.hash if bundle.hash else "(Not uploaded yet)",
@@ -337,23 +390,33 @@ class BundleController(a.UploadAdminController):
 
     def render(self, data):
 
+        data_id = self.context.get("data_id")
+
         r = [
             a.breadcrumbs([
                 a.link("index", "Applications"),
                 a.link("app", data["app_name"], app_id=self.context.get("app_id")),
-                a.link("data_version", "Data #" + str(data["data_id"]),
-                       app_id=self.context.get("app_id"), data_id=data["data_id"])
+                a.link("data_version", "Data #" + str(data_id),
+                       app_id=self.context.get("app_id"), data_id=data_id)
             ], data.get("bundle_name"))
         ]
 
-        if data["data_status"] != DatasModel.STATUS_PUBLISHED:
+        if data["bundle_status"] == BundlesModel.STATUS_DELIVERED:
+            r.append(a.notice(
+                "Bundle has been delivered",
+                """
+                    This bundle has been successfully delivered.
+                    Therefore it cannot be edited anymore.
+                    However, if the data not yet published, the bundle can be detached for the data.
+                """))
+        else:
             r.append(a.file_upload("Upload contents"))
 
         r.extend([
             a.form("Bundle", fields={
                 "bundle_status": a.field("Status", "status", {
-                    BundlesModel.STATUS_CREATED: "info",
-                    BundlesModel.STATUS_UPLOADED: "success",
+                    BundlesModel.STATUS_CREATED: "default",
+                    BundlesModel.STATUS_UPLOADED: "info",
                     BundlesModel.STATUS_DELIVERED: "success",
                     BundlesModel.STATUS_ERROR: "danger",
                     BundlesModel.STATUS_DELIVERING: "info",
@@ -370,17 +433,30 @@ class BundleController(a.UploadAdminController):
                 "bundle_url": a.field("Bundle URL", "readonly", "primary", "non-empty", order=5)
             }, methods={
                 "delete": a.method("Delete", "danger")
-            } if (data["data_status"] != DatasModel.STATUS_PUBLISHED) else {}, data=data),
-            a.form("Bundle properies", fields={
-                "bundle_payload": a.field("Bundle payload", "dorn", "primary", schema=data["payload_scheme"], order=1),
-                "bundle_filters": a.field("Bundle filters", "dorn", "primary", schema=data["filters_scheme"], order=2)
+            } if (data["bundle_status"] != BundlesModel.STATUS_DELIVERED) else {}, data=data),
+
+            a.form("Bundle properties", fields={
+                "bundle_payload": a.field(
+                    "Bundle payload", "dorn", "primary", schema=data["payload_scheme"], order=1),
+                "bundle_filters": a.field(
+                    "Bundle filters", "dorn", "primary", schema=data["filters_scheme"], order=2)
             }, methods={
                 "update_properties": a.method("Update", "primary")
-            }, data=data),
+            }, data=data)])
+
+        if data["data_status"] != DatasModel.STATUS_PUBLISHED:
+            r.append(a.form("Detach bundle from this data", fields={}, methods={
+                "detach": a.method(
+                    "Detach", "danger",
+                    danger="Warning: This operation is destructive. If you lost the bundle's hash, this bundle can be "
+                           "no longer attached."),
+            }, data=data))
+
+        r.extend([
             a.links("Navigate", [
-                a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=data["data_id"]),
+                a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=data_id),
                 a.link("new_bundle", "New bundle", "plus", app_id=self.context.get("app_id"),
-                       data_id=data["data_id"])
+                       data_id=data_id)
             ])
         ])
 
@@ -426,11 +502,13 @@ class BundleController(a.UploadAdminController):
 
         app_id = self.context.get("app_id")
         bundle_id = self.context.get("bundle_id")
+        data_id = self.context.get("data_id")
 
         raise a.Redirect("bundle",
                          message="Bundle has been uploaded",
                          app_id=app_id,
-                         bundle_id=bundle_id)
+                         bundle_id=bundle_id,
+                         data_id=data_id)
 
     @coroutine
     def __producer__(self, write):
@@ -557,7 +635,8 @@ class DataVersionController(a.AdminController):
                     "name": [
                         a.link("bundle", bundle.name, "file",
                                app_id=self.context.get("app_id"),
-                               bundle_id=bundle.bundle_id)
+                               bundle_id=bundle.bundle_id,
+                               data_id=self.context.get("data_id"))
                     ],
                     "size": BundleController.sizeof_fmt(bundle.size) if bundle.size else [
                         a.status("Empty", "info")
@@ -575,8 +654,8 @@ class DataVersionController(a.AdminController):
                     ],
                     "status": [
                         a.status(bundle.status, style={
-                            BundlesModel.STATUS_CREATED: "info",
-                            BundlesModel.STATUS_UPLOADED: "success",
+                            BundlesModel.STATUS_CREATED: "default",
+                            BundlesModel.STATUS_UPLOADED: "info",
                             BundlesModel.STATUS_DELIVERED: "success",
                             BundlesModel.STATUS_ERROR: "danger",
                             BundlesModel.STATUS_DELIVERING: "info"
@@ -614,7 +693,7 @@ class DataVersionController(a.AdminController):
                      """),
                 a.form("Actions", fields={
                     "data_status": a.field("Status", "status", {
-                        DatasModel.STATUS_CREATED: "info",
+                        DatasModel.STATUS_CREATED: "default",
                         DatasModel.STATUS_PUBLISHED: "success",
                         DatasModel.STATUS_PUBLISHING: "info"
                     }.get(data["data_status"], "danger"), icon={
@@ -629,6 +708,9 @@ class DataVersionController(a.AdminController):
                 a.links("Navigate", [
                     a.link("app", "Back", app_id=self.context.get("app_id")),
                     a.link("new_bundle", "Add new bundle", "plus", app_id=self.context.get("app_id"),
+                           data_id=self.context.get("data_id")),
+                    a.link("attach_bundle", "Attach existing bundle", "plus-circle",
+                           app_id=self.context.get("app_id"),
                            data_id=self.context.get("data_id"))
                 ])
             ])
@@ -716,7 +798,6 @@ class NewBundleController(a.AdminController):
         except (KeyError, ValueError):
             raise a.ActionError("Corrupted bundle payload")
 
-
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
@@ -732,7 +813,9 @@ class NewBundleController(a.AdminController):
         raise a.Redirect(
             "bundle",
             message="New bundle has been created",
-            app_id=app_id, bundle_id=bundle_id)
+            app_id=app_id,
+            bundle_id=bundle_id,
+            data_id=data_id)
 
 
 class RootAdminController(a.AdminController):
@@ -980,3 +1063,105 @@ class ApplicationSettingsController(a.AdminController):
 
     def access_scopes(self):
         return ["dlc_admin"]
+
+
+class AttachBundleController(a.AdminController):
+    @coroutine
+    def get(self, app_id, data_id):
+
+        datas = self.application.datas
+        env_service = self.application.env_service
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            yield datas.get_data_version(self.gamespace, data_id)
+        except DataError as e:
+            raise a.ActionError(e.message)
+        except NoSuchDataError:
+            raise a.ActionError("No such data")
+
+        result = {
+            "app_name": app["title"]
+        }
+
+        raise a.Return(result)
+
+    def render(self, data):
+        return [
+            a.breadcrumbs([
+                a.link("index", "Applications"),
+                a.link("app", data["app_name"], app_id=self.context.get("app_id")),
+                a.link("data_version", "Data #" + str(self.context.get("data_id")),
+                       app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
+            ], "Attach bundle"),
+            a.notice("About attaching",
+                     """
+                        This page allows to attach existing bundle into a new data, reusing disk space.
+                        Please note, the bundle should be delivered in order to do that.
+                     """),
+            a.form("Attach existing bundle", fields={
+                "bundle_name": a.field("Bundle name", "text", "primary", "non-empty", order=1),
+                "bundle_hash": a.field("Bundle hash", "text", "primary", "non-empty", order=2)
+            }, methods={
+                "attach": a.method("Attach", "primary")
+            }, data=data),
+            a.links("Navigate", [
+                a.link("data_version", "Back", app_id=self.context.get("app_id"), data_id=self.context.get("data_id"))
+            ])
+        ]
+
+    def access_scopes(self):
+        return ["dlc_admin"]
+
+    @coroutine
+    def attach(self, bundle_name, bundle_hash):
+
+        datas = self.application.datas
+        bundles = self.application.bundles
+        env_service = self.application.env_service
+
+        app_id = self.context.get("app_id")
+        data_id = self.context.get("data_id")
+
+        try:
+            app = yield env_service.get_app_info(self.gamespace, app_id)
+        except AppNotFound as e:
+            raise a.ActionError("App was not found.")
+
+        try:
+            yield datas.get_data_version(self.gamespace, data_id)
+        except DataError as e:
+            raise a.ActionError(e.message)
+        except NoSuchDataError:
+            raise a.ActionError("No such data")
+
+        q = bundles.bundles_query(self.gamespace)
+
+        q.name = bundle_name
+        q.hash = bundle_hash
+        q.status = BundlesModel.STATUS_DELIVERED
+
+        try:
+            bundle = yield q.query(one=True)
+        except BundleQueryError as e:
+            raise a.ActionError(e.message)
+
+        if not bundle:
+            raise a.ActionError("No such bundle")
+
+        try:
+            yield bundles.attach_bundle(
+                self.gamespace, bundle.bundle_id, data_id)
+        except BundleError as e:
+            raise a.ActionError(e.message)
+
+        raise a.Redirect(
+            "bundle",
+            message="Bundle has been attached",
+            app_id=app_id,
+            bundle_id=bundle.bundle_id,
+            data_id=data_id)

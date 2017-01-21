@@ -55,6 +55,7 @@ class DLCServer(common.server.Server):
             "data_version": admin.DataVersionController,
             "bundle": admin.BundleController,
             "new_bundle": admin.NewBundleController,
+            "attach_bundle": admin.AttachBundleController,
             "app_settings": admin.ApplicationSettingsController
         }
 

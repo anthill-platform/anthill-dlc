@@ -34,8 +34,9 @@ class AppVersionHandler(JsonHandler):
         except ApplicationVersionError as e:
             raise HTTPError(500, e.message)
 
-        q = bundles.bundles_query(v.gamespace_id, v.current)
+        q = bundles.bundles_query(v.gamespace_id)
 
+        q.data_id = v.current
         q.status = BundlesModel.STATUS_DELIVERED
         q.filters = env
 

@@ -26,7 +26,7 @@ class DeploymentError(Exception):
 
 class DeploymentMethod(object):
     @coroutine
-    def deploy(self, gamespace_id, app_id, data, bundle_path, bundle):
+    def deploy(self, gamespace_id, app_id, bundle_path, bundle):
         raise NotImplementedError()
 
     def dump(self):
@@ -52,17 +52,17 @@ class LocalDeploymentMethod(DeploymentMethod):
     executor = ThreadPoolExecutor(max_workers=4)
 
     @run_on_executor
-    def deploy(self, gamespace_id, app_id, data, bundle_path, bundle):
+    def deploy(self, gamespace_id, app_id, bundle_path, bundle):
 
-        target_dir = os.path.join(options.data_runtime_location, str(app_id), str(data.version_id))
+        target_dir = os.path.join(options.data_runtime_location, str(app_id), bundle.get_directory())
 
         if not os.path.exists(target_dir):
             os.makedirs(target_dir)
 
         shutil.copyfile(bundle_path,
-            os.path.join(options.data_runtime_location, str(app_id), str(data.version_id), bundle.get_key()))
+            os.path.join(options.data_runtime_location, str(app_id), bundle.get_directory(), bundle.get_key()))
 
-        return options.data_host_location + os.path.join(str(app_id), str(data.version_id), bundle.get_key())
+        return options.data_host_location + os.path.join(str(app_id), bundle.get_directory(), bundle.get_key())
 
 
 class KeyCDNDeploymentMethod(DeploymentMethod):
@@ -96,7 +96,7 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
         return True
 
     @run_on_executor
-    def deploy(self, gamespace_id, app_id, data, bundle_path, bundle):
+    def deploy(self, gamespace_id, app_id, bundle_path, bundle):
 
         sys_fd, path = tempfile.mkstemp()
 
@@ -104,7 +104,7 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
             f.write(self.pri)
             f.write("\n")
 
-        version_dir = str(data.version_id)
+        bundle_directory = bundle.get_directory()
 
         try:
             args = [
@@ -113,7 +113,7 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
                 self.login,
                 KeyCDNDeploymentMethod.KEYCDN_RSYNC_URL,
                 self.zone,
-                os.path.join(self.directory, version_dir, "")
+                os.path.join(self.directory, bundle_directory, "")
             ]
 
             return_code = call(
@@ -131,7 +131,7 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
 
         os.close(sys_fd)
 
-        return self.url + "/" + os.path.join(self.directory, version_dir, str(bundle.get_key()))
+        return self.url + "/" + os.path.join(self.directory, bundle_directory, str(bundle.get_key()))
 
     @coroutine
     def update(self, pri, url, login, zone, directory, **fields):
@@ -183,7 +183,7 @@ class DeploymentModel(Model):
         self.apps = apps
 
     @coroutine
-    def deploy(self, gamespace_id, app_id, data, bundles):
+    def deploy(self, gamespace_id, app_id, bundles):
 
         try:
             settings = yield self.apps.get_application(gamespace_id, app_id)
@@ -196,12 +196,15 @@ class DeploymentModel(Model):
         m.load(settings.deployment_data)
 
         for bundle in bundles:
+            if bundle.status == BundlesModel.STATUS_DELIVERED:
+                continue
+
             yield self.bundles.update_bundle_status(gamespace_id, bundle.bundle_id, BundlesModel.STATUS_DELIVERING)
 
             try:
                 url = yield m.deploy(
-                    gamespace_id, app_id, data,
-                    self.bundles.bundle_path(app_id, data.version_id, bundle), bundle)
+                    gamespace_id, app_id,
+                    self.bundles.bundle_path(app_id, bundle), bundle)
             except DeploymentError as e:
                 yield self.bundles.update_bundle_status(
                     gamespace_id, bundle.bundle_id, BundlesModel.STATUS_ERROR)

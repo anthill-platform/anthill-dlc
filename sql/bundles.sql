@@ -1,6 +1,5 @@
 CREATE TABLE `bundles` (
   `bundle_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `version_id` int(11) unsigned NOT NULL,
   `gamespace_id` int(11) unsigned NOT NULL,
   `bundle_name` varchar(128) NOT NULL,
   `bundle_key` varchar(64) NOT NULL,
@@ -10,7 +9,5 @@ CREATE TABLE `bundles` (
   `bundle_status` enum('CREATED','UPLOADED','DELIVERING','DELIVERED','ERROR') NOT NULL DEFAULT 'CREATED',
   `bundle_filters` json NOT NULL,
   `bundle_payload` json NOT NULL,
-  PRIMARY KEY (`bundle_id`),
-  KEY `version_idx` (`version_id`),
-  CONSTRAINT `bundles_ibfk_1` FOREIGN KEY (`version_id`) REFERENCES `data_versions` (`version_id`)
+  PRIMARY KEY (`bundle_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

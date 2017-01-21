@@ -27,7 +27,7 @@ class NoSuchDataError(Exception):
 
 class DataAdapter(object):
     def __init__(self, data):
-        self.version_id = data["version_id"]
+        self.data_id = data["data_id"]
         self.application_name = data["application_name"]
         self.status = data["version_status"]
         self.reason = data["version_status_reason"]
@@ -49,7 +49,7 @@ class DatasModel(Model):
         return self.db
 
     def get_setup_tables(self):
-        return ["data_versions"]
+        return ["datas"]
 
     @coroutine
     def delete_data_version(self, gamespace_id, app_id, data_id, data_location):
@@ -81,8 +81,8 @@ class DatasModel(Model):
         try:
             yield self.db.execute(
                 """
-                    DELETE FROM `data_versions`
-                    WHERE `version_id`=%s
+                    DELETE FROM `datas`
+                    WHERE `data_id`=%s
                 """, data_id)
         except ConstraintsError:
             raise VersionUsesDataError()
@@ -96,7 +96,7 @@ class DatasModel(Model):
                 versions = yield self.db.query(
                     """
                         SELECT *
-                        FROM `data_versions`
+                        FROM `datas`
                         WHERE `application_name`=%s AND `gamespace_id`=%s AND `version_status`=%s;
                     """, app_id, gamespace_id, DatasModel.STATUS_PUBLISHED)
             except DatabaseError as e:
@@ -108,7 +108,7 @@ class DatasModel(Model):
                 versions = yield self.db.query(
                     """
                         SELECT *
-                        FROM `data_versions`
+                        FROM `datas`
                         WHERE `application_name`=%s AND `gamespace_id`=%s;
                     """, app_id, gamespace_id)
             except DatabaseError as e:
@@ -122,8 +122,8 @@ class DatasModel(Model):
             version = yield self.db.get(
                 """
                     SELECT *
-                    FROM `data_versions`
-                    WHERE `version_id`=%s AND `gamespace_id`=%s;
+                    FROM `datas`
+                    WHERE `data_id`=%s AND `gamespace_id`=%s;
                 """, data_id, gamespace_id)
         except DatabaseError as e:
             raise DataError("Failed to get data version: " + e.args[1])
@@ -139,7 +139,7 @@ class DatasModel(Model):
         try:
             result = yield self.db.insert(
                 """
-                    INSERT INTO `data_versions`
+                    INSERT INTO `datas`
                     (`application_name`, `version_status`, `gamespace_id`)
                     VALUES (%s, %s, %s)
                 """, app_id, DatasModel.STATUS_CREATED, gamespace_id)
@@ -153,9 +153,9 @@ class DatasModel(Model):
         try:
             yield self.db.execute(
                 """
-                    UPDATE `data_versions`
+                    UPDATE `datas`
                     SET `version_status`=%s, `version_status_reason`=%s
-                    WHERE `version_id`=%s AND `gamespace_id`=%s
+                    WHERE `data_id`=%s AND `gamespace_id`=%s
                 """, status, reason, data_id, gamespace_id)
         except DatabaseError as e:
             raise DataError("Failed to create data version: " + e.args[1])
@@ -186,7 +186,7 @@ class DatasModel(Model):
         @coroutine
         def process():
             try:
-                yield self.deployment.deploy(gamespace_id, data.application_name, data, bundles)
+                yield self.deployment.deploy(gamespace_id, data.application_name, bundles)
             except DeploymentError as e:
                 yield self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_ERROR, e.message)
             else:

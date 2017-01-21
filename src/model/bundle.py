@@ -3,7 +3,7 @@ import hashlib
 
 from tornado.gen import coroutine, Return
 from common.model import Model
-from common.database import DatabaseError, format_conditions_json
+from common.database import DatabaseError, DuplicateError, format_conditions_json
 from common.options import options
 
 import ujson
@@ -29,7 +29,6 @@ class BundleQueryError(Exception):
 class BundleAdapter(object):
     def __init__(self, data):
         self.bundle_id = data["bundle_id"]
-        self.version = data["version_id"]
         self.name = data["bundle_name"]
         self.hash = data["bundle_hash"]
         self.url = data["bundle_url"]
@@ -38,6 +37,11 @@ class BundleAdapter(object):
         self.filters = data.get("bundle_filters", {})
         self.payload = data.get("bundle_payload", {})
         self.key = data.get("bundle_key", "")
+
+    def get_directory(self):
+        if self.key:
+            return self.key[0]
+        return "_"
 
     def get_key(self):
         return str(self.bundle_id) + "_" + self.key
@@ -48,27 +52,43 @@ class NoSuchBundleError(Exception):
 
 
 class BundleQuery(object):
-    def __init__(self, gamespace_id, data_id, db):
+    def __init__(self, gamespace_id, db):
         self.gamespace_id = gamespace_id
-        self.data_id = data_id
         self.db = db
 
+        self.data_id = 0
         self.status = None
         self.filters = None
+        self.hash = None
+        self.name = None
 
         self.offset = 0
         self.limit = 0
 
     def __values__(self):
         conditions = [
-            "`bundles`.`gamespace_id`=%s",
-            "`bundles`.`version_id`=%s"
+            "`bundles`.`gamespace_id`=%s"
         ]
 
         data = [
-            str(self.gamespace_id),
-            str(self.data_id)
+            str(self.gamespace_id)
         ]
+
+        if self.data_id:
+            conditions.extend([
+                "`data_bundles`.`data_id`=%s",
+                "`data_bundles`.`bundle_id`=`bundles`.`bundle_id`",
+                "`data_bundles`.`gamespace_id`=`bundles`.`gamespace_id`"
+            ])
+            data.append(str(self.data_id))
+
+        if self.name:
+            conditions.append("`bundles`.`bundle_name`=%s")
+            data.append(str(self.name))
+
+        if self.hash:
+            conditions.append("`bundles`.`bundle_hash`=%s")
+            data.append(str(self.hash))
 
         if self.status:
             conditions.append("`bundles`.`bundle_status`=%s")
@@ -86,20 +106,21 @@ class BundleQuery(object):
         conditions, data = self.__values__()
 
         query = """
-            SELECT {0} * FROM `bundles`
+            SELECT {0} * FROM `bundles`, `data_bundles`
             WHERE {1}
         """.format(
             "SQL_CALC_FOUND_ROWS" if count else "",
             " AND ".join(conditions))
 
         query += """
-            ORDER BY `bundle_id` DESC
+            ORDER BY `bundles`.`bundle_id` DESC
         """
 
         if self.limit:
             query += """
                 LIMIT %s,%s
             """
+
             data.append(int(self.offset))
             data.append(int(self.limit))
 
@@ -109,7 +130,7 @@ class BundleQuery(object):
             try:
                 result = yield self.db.get(query, *data)
             except DatabaseError as e:
-                raise BundleQueryError("Failed to get message: " + e.args[1])
+                raise BundleQueryError("Failed to get bundles: " + e.args[1])
 
             if not result:
                 raise Return(None)
@@ -119,7 +140,7 @@ class BundleQuery(object):
             try:
                 result = yield self.db.query(query, *data)
             except DatabaseError as e:
-                raise BundleQueryError("Failed to query messages: " + e.args[1])
+                raise BundleQueryError("Failed to query bundles: " + e.args[1])
 
             count_result = 0
 
@@ -156,22 +177,23 @@ class BundlesModel(Model):
         return self.db
 
     def get_setup_tables(self):
-        return ["bundles"]
+        return ["bundles", "data_bundles"]
 
     @coroutine
     def delete_bundle(self, gamespace_id, app_id, bundle_id):
 
         bundle = yield self.get_bundle(gamespace_id, bundle_id)
-        data_id = bundle.version
 
-        bundle_file = os.path.join(self.data_location, str(app_id), str(data_id), str(bundle_id))
-
-        try:
-            os.remove(bundle_file)
-        except OSError:
-            pass
+        if bundle.status == BundlesModel.STATUS_DELIVERED:
+            raise BundleError("Cannot delete bundle that is already published.")
 
         try:
+            yield self.db.execute(
+                """
+                DELETE FROM `data_bundles`
+                WHERE `bundle_id`=%s AND `gamespace_id`=%s;
+                """, bundle_id, gamespace_id)
+
             yield self.db.execute(
                 """
                 DELETE FROM `bundles`
@@ -180,15 +202,23 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to delete bundle: " + e.args[1])
 
+        bundle_file = os.path.join(self.data_location, str(app_id), bundle.get_directory(), bundle.get_key())
+
+        try:
+            os.remove(bundle_file)
+        except OSError:
+            pass
+
     @coroutine
     def find_bundle(self, gamespace_id, data_id, bundle_name):
         try:
             bundle = yield self.db.get(
                 """
                 SELECT *
-                FROM `bundles`
-                WHERE `version_id`=%s AND `bundle_name`=%s AND `gamespace_id`=%s;
-                """, data_id, bundle_name, gamespace_id)
+                FROM `bundles`, `data_bundles`
+                WHERE `bundles`.`bundle_name`=%s AND `bundles`.`gamespace_id`=%s
+                  AND `data_bundles`.`data_id`=%s AND `data_bundles`.`bundle_id`=`bundles`.`bundle_id`;
+                """, bundle_name, gamespace_id, data_id)
         except DatabaseError as e:
             raise BundleError("Failed to find bundle: " + e.args[1])
 
@@ -198,14 +228,23 @@ class BundlesModel(Model):
         raise Return(BundleAdapter(bundle))
 
     @coroutine
-    def get_bundle(self, gamespace_id, bundle_id):
+    def get_bundle(self, gamespace_id, bundle_id, data_id=None):
         try:
-            bundle = yield self.db.get(
-                """
-                SELECT *
-                FROM `bundles`
-                WHERE `bundle_id`=%s AND `gamespace_id`=%s;
-                """, bundle_id, gamespace_id)
+            if data_id:
+                bundle = yield self.db.get(
+                    """
+                    SELECT *
+                    FROM `bundles`, `data_bundles`
+                    WHERE `bundles`.`bundle_id`=%s AND `bundles`.`gamespace_id`=%s
+                      AND `data_bundles`.`data_id`=%s AND `data_bundles`.`bundle_id`=`bundles`.`bundle_id`;
+                    """, bundle_id, gamespace_id, data_id)
+            else:
+                bundle = yield self.db.get(
+                    """
+                    SELECT *
+                    FROM `bundles`
+                    WHERE `bundle_id`=%s AND `gamespace_id`=%s;
+                    """, bundle_id, gamespace_id)
         except DatabaseError as e:
             raise BundleError("Failed to get bundle: " + e.args[1])
 
@@ -214,8 +253,8 @@ class BundlesModel(Model):
 
         raise Return(BundleAdapter(bundle))
 
-    def bundles_query(self, gamespace_id, data_id):
-        return BundleQuery(gamespace_id, data_id, self.db)
+    def bundles_query(self, gamespace_id):
+        return BundleQuery(gamespace_id, self.db)
 
     @coroutine
     def list_bundles(self, gamespace_id, data_id):
@@ -223,14 +262,50 @@ class BundlesModel(Model):
             bundles = yield self.db.query(
                 """
                 SELECT *
-                FROM `bundles`
-                WHERE `version_id`=%s AND `gamespace_id`=%s
-                ORDER BY `bundle_id` DESC;
-                """, data_id, gamespace_id)
+                FROM `bundles`, `data_bundles`
+                WHERE `bundles`.`gamespace_id`=%s AND `data_bundles`.`bundle_id`=`bundles`.`bundle_id`
+                    AND `data_bundles`.`data_id`=%s
+                ORDER BY `bundles`.`bundle_id` DESC;
+                """, gamespace_id, data_id)
         except DatabaseError as e:
             raise BundleError("Failed to list bundles: " + e.args[1])
 
         raise Return(map(BundleAdapter, bundles))
+
+    @coroutine
+    def detach_bundle(self, gamespace_id, bundle_id, data_id):
+        try:
+            yield self.db.insert(
+                """
+                    DELETE FROM `data_bundles`
+                    WHERE `gamespace_id`=%s AND `bundle_id`=%s AND `data_id`=%s;
+                """, gamespace_id, bundle_id, data_id)
+        except DatabaseError:
+            raise BundleError("Failed to detach bundle from data")
+
+    @coroutine
+    def attach_bundle(self, gamespace_id, bundle_id, data_id):
+
+        bundle = yield self.get_bundle(gamespace_id, bundle_id)
+
+        try:
+            yield self.find_bundle(gamespace_id, data_id, bundle.name)
+        except NoSuchBundleError:
+            pass
+        else:
+            raise BundleError("Bundle with such name already exists")
+
+        try:
+            yield self.db.insert(
+                """
+                    INSERT INTO `data_bundles`
+                    (`gamespace_id`, `bundle_id`, `data_id`)
+                    VALUES (%s, %s, %s);
+                """, gamespace_id, bundle_id, data_id)
+        except DuplicateError:
+            raise BundleError("Bundle already attached")
+        except DatabaseError:
+            raise BundleError("Failed to attach bundle to data")
 
     @coroutine
     def create_bundle(self, gamespace_id, data_id, bundle_name, bundle_filters, bundle_payload, bundle_key):
@@ -252,13 +327,15 @@ class BundlesModel(Model):
             bundle_id = yield self.db.insert(
                 """
                 INSERT INTO `bundles`
-                (`version_id`, `gamespace_id`, `bundle_name`, `bundle_status`,
+                (`gamespace_id`, `bundle_name`, `bundle_status`,
                     `bundle_filters`, `bundle_payload`, `bundle_key`)
-                VALUES (%s, %s, %s, %s, %s, %s, %s);
-                """, data_id, gamespace_id, bundle_name, BundlesModel.STATUS_CREATED,
+                VALUES (%s, %s, %s, %s, %s, %s);
+                """, gamespace_id, bundle_name, BundlesModel.STATUS_CREATED,
                 ujson.dumps(bundle_filters), ujson.dumps(bundle_payload), bundle_key)
         except DatabaseError as e:
             raise BundleError("Failed to create bundle: " + e.args[1])
+
+        yield self.attach_bundle(gamespace_id, bundle_id, data_id)
 
         raise Return(bundle_id)
 
@@ -317,22 +394,21 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to update bundle status: " + e.args[1])
 
-    def bundle_path(self, app_id, data_id, bundle):
-        return os.path.join(self.data_location, str(app_id), str(data_id), bundle.get_key())
+    def bundle_path(self, app_id, bundle):
+        return os.path.join(self.data_location, str(app_id), bundle.get_directory(), bundle.get_key())
 
-    def bundle_directory(self, app_id, data_id):
-        return os.path.join(self.data_location, str(app_id), str(data_id))
+    def bundle_directory(self, app_id, bundle):
+        return os.path.join(self.data_location, str(app_id), bundle.get_directory())
 
     @coroutine
     def upload_bundle(self, gamespace_id, app_id, bundle, producer):
 
         bundle_id = bundle.bundle_id
-        data_id = bundle.version
 
-        if not os.path.exists(self.bundle_directory(app_id, data_id)):
-            os.makedirs(self.bundle_directory(app_id, data_id))
+        if not os.path.exists(self.bundle_directory(app_id, bundle)):
+            os.makedirs(self.bundle_directory(app_id, bundle))
 
-        bundle_file = self.bundle_path(app_id, data_id, bundle)
+        bundle_file = self.bundle_path(app_id, bundle)
 
         _h = BundlesModel.HASH_METHOD()
         output_file = open(bundle_file, 'wb')

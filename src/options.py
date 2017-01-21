@@ -81,7 +81,7 @@ define("data_runtime_location",
        type=str)
 
 define("data_host_location",
-       default="http://dlc-dev.anthill.local/download/",
+       default="http://dlc-dev.anthill/download/",
        help="DLC content prefix URL",
        group="dlc",
        type=str)
