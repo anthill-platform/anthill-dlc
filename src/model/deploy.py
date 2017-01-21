@@ -77,6 +77,7 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
         self.url = None
         self.login = None
         self.zone = None
+        self.directory = ""
 
     @staticmethod
     def render(a):
@@ -84,6 +85,9 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
             "login": a.field("KeyCDN Username", "text", "primary", order=1),
             "zone": a.field("KeyCDN Zone Name", "text", "primary", order=2),
             "url": a.field("Public URL (including scheme)", "text", "primary", order=3),
+            "directory": a.field("Directory to deliver files in. Should be created beforehand. "
+                                 "Should end with a slash (/). Empty if in root.",
+                                 "text", "primary", order=3),
             "pri": a.field("Private SSH Key", "text", "primary", multiline=20, order=4)
         }
 
@@ -100,46 +104,57 @@ class KeyCDNDeploymentMethod(DeploymentMethod):
             f.write(self.pri)
             f.write("\n")
 
+        version_dir = str(data.version_id)
+
         try:
-            retcode = call(["rsync -avz --chmod=u=rwX,g=rX "
-                            "-e 'ssh -i {0} -o StrictHostKeyChecking=no' {1} {2}@{3}:zones/{4}/{5}/".format(
+            args = [
                 path,
                 bundle_path,
                 self.login,
                 KeyCDNDeploymentMethod.KEYCDN_RSYNC_URL,
                 self.zone,
-                str(data.version_id))], shell=True)
+                os.path.join(self.directory, version_dir, "")
+            ]
+
+            return_code = call(
+                ["rsync -avz --chmod=u=rwX,g=rX "
+                 "-e 'ssh -i {0} -o StrictHostKeyChecking=no' "
+                 "{1} {2}@{3}:zones/{4}/{5}".format(*args)], shell=True)
+
         except CalledProcessError as e:
             raise DeploymentError("Rsync failed with code: " + str(e.returncode))
         except BaseException as e:
             raise DeploymentError(str(e))
 
-        if retcode:
-            raise DeploymentError("Rsync failed with code: " + str(retcode))
+        if return_code:
+            raise DeploymentError("Rsync failed with code: " + str(return_code))
 
         os.close(sys_fd)
 
-        return self.url + "/" + str(data.version_id) + "/" + str(bundle.get_key())
+        return self.url + "/" + os.path.join(self.directory, version_dir, str(bundle.get_key()))
 
     @coroutine
-    def update(self, pri, url, login, zone, **fields):
+    def update(self, pri, url, login, zone, directory, **fields):
         self.pri = str(pri)
         self.url = str(url)
         self.login = str(login)
         self.zone = str(zone)
+        self.directory = str(directory)
 
     def load(self, data):
         self.pri = data.get("pri")
         self.url = data.get("url")
         self.login = data.get("login")
         self.zone = data.get("zone")
+        self.directory = data.get("directory", "")
 
     def dump(self):
         return {
             "pri": str(self.pri),
             "url": str(self.url),
             "login": str(self.login),
-            "zone": str(self.zone)
+            "zone": str(self.zone),
+            "directory": str(self.directory)
         }
 
 
