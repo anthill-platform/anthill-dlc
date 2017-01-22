@@ -528,10 +528,8 @@ class DataVersionController(a.AdminController):
 
         datas = self.application.datas
 
-        data_location = self.application.data_location
-
         try:
-            yield datas.delete_data_version(self.gamespace, app_id, data_id, data_location)
+            yield datas.delete_data_version(self.gamespace, app_id, data_id)
         except VersionUsesDataError:
             raise a.ActionError("Application Version uses this data, detach the version first.")
 

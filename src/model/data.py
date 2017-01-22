@@ -52,7 +52,7 @@ class DatasModel(Model):
         return ["datas"]
 
     @coroutine
-    def delete_data_version(self, gamespace_id, app_id, data_id, data_location):
+    def delete_data_version(self, gamespace_id, app_id, data_id):
 
         try:
             exists = yield self.db.get(
@@ -76,7 +76,10 @@ class DatasModel(Model):
 
         if bundles is not None:
             for bundle in bundles:
-                yield self.bundles.delete_bundle(gamespace_id, app_id, data_id, bundle.bundle_id, data_location)
+                if bundle.status == BundlesModel.STATUS_DELIVERED:
+                    continue
+
+                yield self.bundles.delete_bundle(gamespace_id, app_id, data_id, bundle.bundle_id)
 
         try:
             yield self.db.execute(

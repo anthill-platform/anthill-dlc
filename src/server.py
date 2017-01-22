@@ -68,6 +68,7 @@ class DLCServer(common.server.Server):
 
     def get_handlers(self):
         return [
+            (r"/bundle", handler.FetchBundleHandler),
             (r"/data/([a-z0-9_-]+)/([a-z0-9_\.-]+)", handler.AppVersionHandler),
         ]
 
