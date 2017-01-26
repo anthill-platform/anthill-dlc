@@ -170,7 +170,7 @@ class ApplicationsModel(Model):
         return self.db
 
     def get_setup_tables(self):
-        return ["application_versions", "applications"]
+        return ["applications", "application_versions"]
 
     @coroutine
     def delete_application_version(self, gamespace_id, app_id, version_id):
