@@ -466,7 +466,7 @@ class BundleController(a.UploadAdminController):
         return ["dlc_admin"]
 
     @coroutine
-    def receive_started(self, filename):
+    def receive_started(self, filename, args):
 
         bundles = self.application.bundles
         env_service = self.application.env_service
