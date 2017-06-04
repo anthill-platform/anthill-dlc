@@ -75,7 +75,7 @@ class ApplicationController(a.AdminController):
                 "new_data_version": a.method("New data version", "primary")
             }, data=data),
             a.links("Navigate", [
-                a.link("index", "Back"),
+                a.link("index", "Back", icon="chevron-left"),
                 a.link("app_settings", "Application Settings", icon="cog", app_id=self.context.get("app_id"))
             ])
         ]
@@ -782,7 +782,7 @@ class NewBundleController(a.AdminController):
         return ["dlc_admin"]
 
     @coroutine
-    def create(self, bundle_name, bundle_filters, bundle_payload):
+    def create(self, bundle_name, bundle_filters, bundle_payload, **ignored):
 
         bundles = self.application.bundles
 
