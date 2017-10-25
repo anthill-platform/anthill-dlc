@@ -24,7 +24,7 @@ class ApplicationController(a.AdminController):
         env_service = self.application.env_service
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -111,7 +111,7 @@ class ApplicationVersionController(a.AdminController):
         env_service = self.application.env_service
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -176,7 +176,7 @@ class ApplicationVersionController(a.AdminController):
         version_id = self.context.get("version_id")
 
         try:
-            yield env_service.get_app_info(self.gamespace, app_id)
+            yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -303,7 +303,7 @@ class BundleController(a.UploadAdminController):
             raise a.ActionError("Corrupted payload")
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -343,7 +343,7 @@ class BundleController(a.UploadAdminController):
         apps = self.application.app_versions
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -475,7 +475,7 @@ class BundleController(a.UploadAdminController):
         bundle_id = self.context.get("bundle_id")
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -548,7 +548,7 @@ class DataVersionController(a.AdminController):
         data_id = self.context.get("data_id")
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -571,7 +571,7 @@ class DataVersionController(a.AdminController):
         env_service = self.application.env_service
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -728,7 +728,7 @@ class NewBundleController(a.AdminController):
         env_service = self.application.env_service
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -821,7 +821,7 @@ class RootAdminController(a.AdminController):
     def get(self):
 
         env_service = self.application.env_service
-        apps = yield env_service.list_apps(self.gamespace)
+        apps = yield env_service.list_apps()
 
         result = {
             "apps": apps
@@ -853,7 +853,7 @@ class ApplicationSettingsController(a.AdminController):
         apps = self.application.app_versions
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -897,7 +897,7 @@ class ApplicationSettingsController(a.AdminController):
         apps = self.application.app_versions
 
         try:
-            yield env_service.get_app_info(self.gamespace, app_id)
+            yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -934,7 +934,7 @@ class ApplicationSettingsController(a.AdminController):
         apps = self.application.app_versions
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -984,7 +984,7 @@ class ApplicationSettingsController(a.AdminController):
             raise a.ActionError("Corrupted payload scheme")
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -1071,7 +1071,7 @@ class AttachBundleController(a.AdminController):
         env_service = self.application.env_service
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -1126,7 +1126,7 @@ class AttachBundleController(a.AdminController):
         data_id = self.context.get("data_id")
 
         try:
-            app = yield env_service.get_app_info(self.gamespace, app_id)
+            app = yield env_service.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
