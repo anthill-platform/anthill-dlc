@@ -69,13 +69,13 @@ define("cache_max_connections",
 # DLC
 
 define("data_location",
-       default="/opt/anthill/dlc-data",
+       default="/usr/local/anthill/dlc-data",
        help="DLC content location folder",
        group="dlc",
        type=str)
 
 define("data_runtime_location",
-       default="/opt/anthill/dlc-runtime",
+       default="/usr/local/anthill/dlc-runtime",
        help="DLC content runtime folder",
        group="dlc",
        type=str)
