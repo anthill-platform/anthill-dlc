@@ -14,17 +14,17 @@ from model.apps import ApplicationVersionError, NoSuchApplicationVersionError, \
 from model.bundle import BundleError, NoSuchBundleError, BundlesModel, BundleQueryError
 from model.deploy import DeploymentMethods, DeploymentModel
 
-from common.environment import AppNotFound
+from common.environment import EnvironmentClient, AppNotFound
 
 
 class ApplicationController(a.AdminController):
     @coroutine
     def get(self, app_id):
 
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -32,8 +32,8 @@ class ApplicationController(a.AdminController):
         datas = yield datas.list_data_versions(self.gamespace, app_id)
 
         result = {
-            "app_name": app["title"],
-            "versions": app["versions"],
+            "app_name": app.title,
+            "versions": app.versions,
             "datas": datas
         }
 
@@ -108,10 +108,10 @@ class ApplicationVersionController(a.AdminController):
 
         app_versions = self.application.app_versions
         datas = self.application.datas
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -130,7 +130,7 @@ class ApplicationVersionController(a.AdminController):
             raise a.ActionError(e.message)
 
         result = {
-            "app_name": app["title"],
+            "app_name": app.title,
             "attach_to": attach_to,
             "datas": data_versions
         }
@@ -171,12 +171,12 @@ class ApplicationVersionController(a.AdminController):
         if attach_to == "0":
             yield self.delete()
 
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
         app_id = self.context.get("app_id")
         version_id = self.context.get("version_id")
 
         try:
-            yield env_service.get_app_info(app_id)
+            yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -286,7 +286,7 @@ class BundleController(a.UploadAdminController):
 
         datas = self.application.datas
         bundles = self.application.bundles
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         app_id = self.context.get("app_id")
         bundle_id = self.context.get("bundle_id")
@@ -303,7 +303,7 @@ class BundleController(a.UploadAdminController):
             raise a.ActionError("Corrupted payload")
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -339,11 +339,11 @@ class BundleController(a.UploadAdminController):
 
         bundles = self.application.bundles
         datas = self.application.datas
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
         apps = self.application.app_versions
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -373,7 +373,7 @@ class BundleController(a.UploadAdminController):
             raise a.ActionError(e.message)
 
         result = {
-            "app_name": app["title"],
+            "app_name": app.title,
             "bundle_name": bundle.name,
             "bundle_status": bundle.status,
             "data_status": data.status,
@@ -469,13 +469,13 @@ class BundleController(a.UploadAdminController):
     def receive_started(self, filename, args):
 
         bundles = self.application.bundles
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         app_id = self.context.get("app_id")
         bundle_id = self.context.get("bundle_id")
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -542,13 +542,13 @@ class DataVersionController(a.AdminController):
     def publish(self, **ignored):
 
         datas = self.application.datas
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -568,10 +568,10 @@ class DataVersionController(a.AdminController):
 
         bundles = self.application.bundles
         datas = self.application.datas
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -588,7 +588,7 @@ class DataVersionController(a.AdminController):
             raise a.ActionError(e.message)
 
         result = {
-            "app_name": app["title"],
+            "app_name": app.title,
             "bundles": bundles,
             "data_status": data.status + (": " + str(data.reason) if data.reason else "")
         }
@@ -725,10 +725,10 @@ class NewBundleController(a.AdminController):
 
         datas = self.application.datas
         apps = self.application.app_versions
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -751,7 +751,7 @@ class NewBundleController(a.AdminController):
             raise a.ActionError("No such data")
 
         result = {
-            "app_name": app["title"],
+            "app_name": app.title,
             "filters_scheme": filters_scheme,
             "payload_scheme": payload_scheme
         }
@@ -820,8 +820,8 @@ class RootAdminController(a.AdminController):
     @coroutine
     def get(self):
 
-        env_service = self.application.env_service
-        apps = yield env_service.list_apps()
+        environment_client = EnvironmentClient(self.application.cache)
+        apps = yield environment_client.list_apps()
 
         result = {
             "apps": apps
@@ -849,11 +849,11 @@ class ApplicationSettingsController(a.AdminController):
     @coroutine
     def get(self, app_id):
 
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
         apps = self.application.app_versions
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -878,7 +878,7 @@ class ApplicationSettingsController(a.AdminController):
             deployment_methods[""] = "< SELECT >"
 
         result = {
-            "app_name": app["title"],
+            "app_name": app.title,
             "deployment_methods": deployment_methods,
             "deployment_method": deployment_method,
             "deployment_data": deployment_data,
@@ -893,11 +893,11 @@ class ApplicationSettingsController(a.AdminController):
 
         app_id = self.context.get("app_id")
 
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
         apps = self.application.app_versions
 
         try:
-            yield env_service.get_app_info(app_id)
+            yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -930,11 +930,11 @@ class ApplicationSettingsController(a.AdminController):
 
         app_id = self.context.get("app_id")
 
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
         apps = self.application.app_versions
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -970,7 +970,7 @@ class ApplicationSettingsController(a.AdminController):
 
         app_id = self.context.get("app_id")
 
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
         apps = self.application.app_versions
 
         try:
@@ -984,7 +984,7 @@ class ApplicationSettingsController(a.AdminController):
             raise a.ActionError("Corrupted payload scheme")
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -1068,10 +1068,10 @@ class AttachBundleController(a.AdminController):
     def get(self, app_id, data_id):
 
         datas = self.application.datas
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -1083,7 +1083,7 @@ class AttachBundleController(a.AdminController):
             raise a.ActionError("No such data")
 
         result = {
-            "app_name": app["title"]
+            "app_name": app.title
         }
 
         raise a.Return(result)
@@ -1120,13 +1120,13 @@ class AttachBundleController(a.AdminController):
 
         datas = self.application.datas
         bundles = self.application.bundles
-        env_service = self.application.env_service
+        environment_client = EnvironmentClient(self.application.cache)
 
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
 
         try:
-            app = yield env_service.get_app_info(app_id)
+            app = yield environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 

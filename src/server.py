@@ -42,7 +42,6 @@ class DLCServer(common.server.Server):
         self.bundles = BundlesModel(self.db)
         self.deployment = DeploymentModel(self.bundles, self.app_versions)
         self.datas = DatasModel(self.bundles, self.deployment, self.db)
-        self.env_service = common.environment.EnvironmentClient(self.cache)
 
     def get_models(self):
         return [self.datas, self.bundles, self.deployment, self.app_versions]
