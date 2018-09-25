@@ -1,13 +1,13 @@
+
 import os
 import hashlib
 
-from tornado.gen import coroutine, Return
-from common.model import Model
-from common.database import DatabaseError, DuplicateError, format_conditions_json
-from common.options import options
+from anthill.common import random_string
+from anthill.common.model import Model
+from anthill.common.database import DatabaseError, DuplicateError, format_conditions_json
+from anthill.common.options import options
 
 import ujson
-from common import random_string
 
 
 class BundleError(Exception):
@@ -101,8 +101,7 @@ class BundleQuery(object):
 
         return conditions, data
 
-    @coroutine
-    def query(self, one=False, count=False):
+    async def query(self, one=False, count=False):
         conditions, data = self.__values__()
 
         query = """
@@ -128,24 +127,24 @@ class BundleQuery(object):
 
         if one:
             try:
-                result = yield self.db.get(query, *data)
+                result = await self.db.get(query, *data)
             except DatabaseError as e:
                 raise BundleQueryError("Failed to get bundles: " + e.args[1])
 
             if not result:
-                raise Return(None)
+                return None
 
-            raise Return(BundleAdapter(result))
+            return BundleAdapter(result)
         else:
             try:
-                result = yield self.db.query(query, *data)
+                result = await self.db.query(query, *data)
             except DatabaseError as e:
                 raise BundleQueryError("Failed to query bundles: " + e.args[1])
 
             count_result = 0
 
             if count:
-                count_result = yield self.db.get(
+                count_result = await self.db.get(
                     """
                         SELECT FOUND_ROWS() AS count;
                     """)
@@ -154,9 +153,9 @@ class BundleQuery(object):
             items = map(BundleAdapter, result)
 
             if count:
-                raise Return((items, count_result))
+                return (items, count_result)
 
-            raise Return(items)
+            return items
 
 
 class BundlesModel(Model):
@@ -179,22 +178,21 @@ class BundlesModel(Model):
     def get_setup_tables(self):
         return ["bundles", "data_bundles"]
 
-    @coroutine
-    def delete_bundle(self, gamespace_id, app_id, bundle_id):
+    async def delete_bundle(self, gamespace_id, app_id, bundle_id):
 
-        bundle = yield self.get_bundle(gamespace_id, bundle_id)
+        bundle = await self.get_bundle(gamespace_id, bundle_id)
 
         if bundle.status == BundlesModel.STATUS_DELIVERED:
             raise BundleError("Cannot delete bundle that is already published.")
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 DELETE FROM `data_bundles`
                 WHERE `bundle_id`=%s AND `gamespace_id`=%s;
                 """, bundle_id, gamespace_id)
 
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 DELETE FROM `bundles`
                 WHERE `bundle_id`=%s AND `gamespace_id`=%s;
@@ -209,10 +207,9 @@ class BundlesModel(Model):
         except OSError:
             pass
 
-    @coroutine
-    def find_bundle(self, gamespace_id, data_id, bundle_name):
+    async def find_bundle(self, gamespace_id, data_id, bundle_name):
         try:
-            bundle = yield self.db.get(
+            bundle = await self.db.get(
                 """
                 SELECT *
                 FROM `bundles`, `data_bundles`
@@ -225,13 +222,12 @@ class BundlesModel(Model):
         if not bundle:
             raise NoSuchBundleError()
 
-        raise Return(BundleAdapter(bundle))
+        return BundleAdapter(bundle)
 
-    @coroutine
-    def get_bundle(self, gamespace_id, bundle_id, data_id=None):
+    async def get_bundle(self, gamespace_id, bundle_id, data_id=None):
         try:
             if data_id:
-                bundle = yield self.db.get(
+                bundle = await self.db.get(
                     """
                     SELECT *
                     FROM `bundles`, `data_bundles`
@@ -239,7 +235,7 @@ class BundlesModel(Model):
                       AND `data_bundles`.`data_id`=%s AND `data_bundles`.`bundle_id`=`bundles`.`bundle_id`;
                     """, bundle_id, gamespace_id, data_id)
             else:
-                bundle = yield self.db.get(
+                bundle = await self.db.get(
                     """
                     SELECT *
                     FROM `bundles`
@@ -251,15 +247,14 @@ class BundlesModel(Model):
         if not bundle:
             raise NoSuchBundleError()
 
-        raise Return(BundleAdapter(bundle))
+        return BundleAdapter(bundle)
 
     def bundles_query(self, gamespace_id):
         return BundleQuery(gamespace_id, self.db)
 
-    @coroutine
-    def list_bundles(self, gamespace_id, data_id):
+    async def list_bundles(self, gamespace_id, data_id):
         try:
-            bundles = yield self.db.query(
+            bundles = await self.db.query(
                 """
                 SELECT *
                 FROM `bundles`, `data_bundles`
@@ -270,12 +265,11 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to list bundles: " + e.args[1])
 
-        raise Return(map(BundleAdapter, bundles))
+        return map(BundleAdapter, bundles)
 
-    @coroutine
-    def detach_bundle(self, gamespace_id, bundle_id, data_id):
+    async def detach_bundle(self, gamespace_id, bundle_id, data_id):
         try:
-            yield self.db.insert(
+            await self.db.insert(
                 """
                     DELETE FROM `data_bundles`
                     WHERE `gamespace_id`=%s AND `bundle_id`=%s AND `data_id`=%s;
@@ -283,20 +277,19 @@ class BundlesModel(Model):
         except DatabaseError:
             raise BundleError("Failed to detach bundle from data")
 
-    @coroutine
-    def attach_bundle(self, gamespace_id, bundle_id, data_id):
+    async def attach_bundle(self, gamespace_id, bundle_id, data_id):
 
-        bundle = yield self.get_bundle(gamespace_id, bundle_id)
+        bundle = await self.get_bundle(gamespace_id, bundle_id)
 
         try:
-            yield self.find_bundle(gamespace_id, data_id, bundle.name)
+            await self.find_bundle(gamespace_id, data_id, bundle.name)
         except NoSuchBundleError:
             pass
         else:
             raise BundleError("Bundle with such name already exists")
 
         try:
-            yield self.db.insert(
+            await self.db.insert(
                 """
                     INSERT INTO `data_bundles`
                     (`gamespace_id`, `bundle_id`, `data_id`)
@@ -307,8 +300,7 @@ class BundlesModel(Model):
         except DatabaseError:
             raise BundleError("Failed to attach bundle to data")
 
-    @coroutine
-    def create_bundle(self, gamespace_id, data_id, bundle_name, bundle_filters, bundle_payload, bundle_key):
+    async def create_bundle(self, gamespace_id, data_id, bundle_name, bundle_filters, bundle_payload, bundle_key):
 
         if not isinstance(bundle_filters, dict):
             raise BundleError("bundle_filters should be a dict")
@@ -317,14 +309,14 @@ class BundlesModel(Model):
             raise BundleError("bundle_payload should be a dict")
 
         try:
-            yield self.find_bundle(gamespace_id, data_id, bundle_name)
+            await self.find_bundle(gamespace_id, data_id, bundle_name)
         except NoSuchBundleError:
             pass
         else:
             raise BundleError("Bundle with such name already exists")
 
         try:
-            bundle_id = yield self.db.insert(
+            bundle_id = await self.db.insert(
                 """
                 INSERT INTO `bundles`
                 (`gamespace_id`, `bundle_name`, `bundle_status`,
@@ -335,18 +327,17 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to create bundle: " + e.args[1])
 
-        yield self.attach_bundle(gamespace_id, bundle_id, data_id)
+        await self.attach_bundle(gamespace_id, bundle_id, data_id)
 
-        raise Return(bundle_id)
+        return bundle_id
 
-    @coroutine
-    def update_bundle_properties(self, gamespace_id, bundle_id, bundle_filters, bundle_payload):
+    async def update_bundle_properties(self, gamespace_id, bundle_id, bundle_filters, bundle_payload):
 
         if not isinstance(bundle_filters, dict):
             raise BundleError("bundle_filters should be a dict")
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 UPDATE `bundles`
                 SET `bundle_filters`=%s, `bundle_payload`=%s
@@ -355,11 +346,10 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to update bundle: " + e.args[1])
 
-    @coroutine
-    def update_bundle(self, gamespace_id, bundle_id, bundle_hash, bundle_status, bundle_size):
+    async def update_bundle(self, gamespace_id, bundle_id, bundle_hash, bundle_status, bundle_size):
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 UPDATE `bundles`
                 SET `bundle_hash`=%s, `bundle_status`=%s, `bundle_size`=%s
@@ -368,11 +358,10 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to update bundle: " + e.args[1])
 
-    @coroutine
-    def update_bundle_status(self, gamespace_id, bundle_id, bundle_status):
+    async def update_bundle_status(self, gamespace_id, bundle_id, bundle_status):
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 UPDATE `bundles`
                 SET `bundle_status`=%s
@@ -381,11 +370,10 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to update bundle status: " + e.args[1])
 
-    @coroutine
-    def update_bundle_url(self, gamespace_id, bundle_id, bundle_status, bundle_url):
+    async def update_bundle_url(self, gamespace_id, bundle_id, bundle_status, bundle_url):
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 UPDATE `bundles`
                 SET `bundle_status`=%s, `bundle_url`=%s
@@ -400,8 +388,7 @@ class BundlesModel(Model):
     def bundle_directory(self, app_id, bundle):
         return os.path.join(self.data_location, str(app_id), bundle.get_directory())
 
-    @coroutine
-    def upload_bundle(self, gamespace_id, app_id, bundle, producer):
+    async def upload_bundle(self, gamespace_id, app_id, bundle, producer):
 
         bundle_id = bundle.bundle_id
 
@@ -416,17 +403,16 @@ class BundlesModel(Model):
         class Size:
             bundle_size = 0
 
-        @coroutine
-        def write(data):
+        async def write(data):
             output_file.write(data)
             _h.update(data)
             Size.bundle_size += len(data)
 
-        yield producer(write)
+        await producer(write)
 
         output_file.close()
 
         bundle_hash = _h.hexdigest()
 
-        yield self.update_bundle(
+        await self.update_bundle(
             gamespace_id, bundle_id, bundle_hash, BundlesModel.STATUS_UPLOADED, Size.bundle_size)

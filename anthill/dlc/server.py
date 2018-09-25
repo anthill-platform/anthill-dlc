@@ -1,36 +1,28 @@
 
-from tornado.gen import coroutine
-from common.options import options
+from anthill.common.options import options
+from anthill.common import server, handler, keyvalue, database, access
 
-import common.server
-import common.handler
-import common.keyvalue
-import common.database
-import common.access
-import common.sign
-import common.environment
+from . model.deploy import DeploymentModel
+from . model.bundle import BundlesModel
+from . model.data import DatasModel
+from . model.apps import ApplicationsModel
 
-from model.deploy import DeploymentModel
-from model.bundle import BundlesModel
-from model.data import DatasModel
-from model.apps import ApplicationsModel
-
-import handler
-import admin
-import options as _opts
+from . import handler
+from . import admin
+from . import options as _opts
 
 
-class DLCServer(common.server.Server):
+class DLCServer(server.Server):
     def __init__(self):
         super(DLCServer, self).__init__()
 
-        self.db = common.database.Database(
+        self.db = database.Database(
             host=options.db_host,
             database=options.db_name,
             user=options.db_username,
             password=options.db_password)
 
-        self.cache = common.keyvalue.KeyValueStorage(
+        self.cache = keyvalue.KeyValueStorage(
             host=options.cache_host,
             port=options.cache_port,
             db=options.cache_db,
@@ -71,7 +63,8 @@ class DLCServer(common.server.Server):
             (r"/data/([a-z0-9_-]+)/([a-z0-9_\.-]+)", handler.AppVersionHandler),
         ]
 
+
 if __name__ == "__main__":
-    stt = common.server.init()
-    common.access.AccessToken.init([common.access.public()])
-    common.server.start(DLCServer)
+    stt = server.init()
+    access.AccessToken.init([access.public()])
+    server.start(DLCServer)

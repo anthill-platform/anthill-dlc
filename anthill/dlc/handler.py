@@ -1,12 +1,11 @@
 
-from common.handler import JsonHandler, AuthenticatedHandler
-from common.access import scoped, AccessToken
+from anthill.common.handler import JsonHandler, AuthenticatedHandler
+from anthill.common.access import scoped, AccessToken
 
-from tornado.gen import coroutine
 from tornado.web import HTTPError
 
-from model.apps import NoSuchApplicationVersionError, ApplicationVersionError
-from model.bundle import BundleQueryError, BundlesModel
+from . model.apps import NoSuchApplicationVersionError, ApplicationVersionError
+from . model.bundle import BundleQueryError, BundlesModel
 
 import ujson
 
@@ -15,8 +14,7 @@ class AppVersionHandler(JsonHandler):
     def data_received(self, chunk):
         pass
 
-    @coroutine
-    def get(self, app_name, version_name):
+    async def get(self, app_name, version_name):
 
         apps = self.application.app_versions
         bundles = self.application.bundles
@@ -29,7 +27,7 @@ class AppVersionHandler(JsonHandler):
             raise HTTPError(400, "Corrupted 'env'")
 
         try:
-            v = yield apps.get_application_version(app_name, version_name)
+            v = await apps.get_application_version(app_name, version_name)
         except NoSuchApplicationVersionError:
             raise HTTPError(404, "No such app and/or version")
         except ApplicationVersionError as e:
@@ -42,7 +40,7 @@ class AppVersionHandler(JsonHandler):
         q.filters = env
 
         try:
-            bundles = yield q.query(one=False)
+            bundles = await q.query(one=False)
         except BundleQueryError as e:
             raise HTTPError(500, e.message)
 
@@ -60,8 +58,7 @@ class AppVersionHandler(JsonHandler):
 
 class FetchBundleHandler(AuthenticatedHandler):
     @scoped(scopes=["dlc"])
-    @coroutine
-    def get(self):
+    async def get(self):
 
         apps = self.application.app_versions
         bundles = self.application.bundles
@@ -78,7 +75,7 @@ class FetchBundleHandler(AuthenticatedHandler):
         q.hash = bundle_hash
 
         try:
-            bundle = yield q.query(one=True)
+            bundle = await q.query(one=True)
         except BundleQueryError as e:
             raise HTTPError(500, e.message)
 

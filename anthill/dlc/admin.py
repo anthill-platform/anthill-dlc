@@ -1,35 +1,34 @@
 
-from tornado.gen import coroutine, Return, Future, IOLoop
+from tornado.gen import IOLoop
 from tornado.queues import Queue
 
-import common.admin as a
+import anthill.common.admin as a
+from anthill.common import random_string
+from anthill.common.environment import EnvironmentClient, AppNotFound
+
+from . model.data import VersionUsesDataError, DataError, NoSuchDataError, DatasModel
+from . model.apps import ApplicationVersionError, NoSuchApplicationVersionError, \
+    NoSuchApplicationError, ApplicationError, ApplicationsModel
+from . model.bundle import BundleError, NoSuchBundleError, BundlesModel, BundleQueryError
+from . model.deploy import DeploymentMethods, DeploymentModel
+
 import base64
 import logging
 import ujson
-from common import random_string
-
-from model.data import VersionUsesDataError, DataError, NoSuchDataError, DatasModel
-from model.apps import ApplicationVersionError, NoSuchApplicationVersionError, \
-    NoSuchApplicationError, ApplicationError, ApplicationsModel
-from model.bundle import BundleError, NoSuchBundleError, BundlesModel, BundleQueryError
-from model.deploy import DeploymentMethods, DeploymentModel
-
-from common.environment import EnvironmentClient, AppNotFound
 
 
 class ApplicationController(a.AdminController):
-    @coroutine
-    def get(self, app_id):
+    async def get(self, app_id):
 
         environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         datas = self.application.datas
-        datas = yield datas.list_data_versions(self.gamespace, app_id)
+        datas = await datas.list_data_versions(self.gamespace, app_id)
 
         result = {
             "app_name": app.title,
@@ -37,17 +36,16 @@ class ApplicationController(a.AdminController):
             "datas": datas
         }
 
-        raise a.Return(result)
+        return result
 
-    @coroutine
-    def new_data_version(self):
+    async def new_data_version(self):
 
         app_id = self.context.get("app_id")
 
         datas = self.application.datas
 
         try:
-            data_id = yield datas.create_data_version(self.gamespace, app_id)
+            data_id = await datas.create_data_version(self.gamespace, app_id)
         except DataError as e:
             raise a.ActionError(e.message)
 
@@ -63,7 +61,7 @@ class ApplicationController(a.AdminController):
             ], data["app_name"]),
             a.links("Application '{0}' versions".format(data["app_name"]), links=[
                 a.link("app_version", v_name, icon="tags", app_id=self.context.get("app_id"),
-                       version_id=v_name) for v_name, v_id in data["versions"].iteritems()
+                       version_id=v_name) for v_name, v_id in data["versions"].items()
             ]),
             a.links("Data versions", [
                 a.link("data_version", str(d.data_id), "folder",
@@ -85,8 +83,7 @@ class ApplicationController(a.AdminController):
 
 
 class ApplicationVersionController(a.AdminController):
-    @coroutine
-    def delete(self, **ignored):
+    async def delete(self, **ignored):
 
         app_id = self.context.get("app_id")
         version_id = self.context.get("version_id")
@@ -94,7 +91,7 @@ class ApplicationVersionController(a.AdminController):
         app_versions = self.application.app_versions
 
         try:
-            yield app_versions.delete_application_version(self.gamespace, app_id, version_id)
+            await app_versions.delete_application_version(self.gamespace, app_id, version_id)
         except ApplicationVersionError as e:
             raise a.ActionError(e.message)
 
@@ -103,20 +100,19 @@ class ApplicationVersionController(a.AdminController):
             message="Application version has been detached",
             app_id=app_id)
 
-    @coroutine
-    def get(self, app_id, version_id):
+    async def get(self, app_id, version_id):
 
         app_versions = self.application.app_versions
         datas = self.application.datas
         environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            v = yield app_versions.get_application_version(app_id, version_id)
+            v = await app_versions.get_application_version(app_id, version_id)
         except NoSuchApplicationVersionError:
             attach_to = 0
         except ApplicationVersionError as e:
@@ -125,7 +121,7 @@ class ApplicationVersionController(a.AdminController):
             attach_to = v.current
 
         try:
-            data_versions = yield datas.list_data_versions(self.gamespace, app_id, published=True)
+            data_versions = await datas.list_data_versions(self.gamespace, app_id, published=True)
         except DataError as e:
             raise a.ActionError(e.message)
 
@@ -135,7 +131,7 @@ class ApplicationVersionController(a.AdminController):
             "datas": data_versions
         }
 
-        raise a.Return(result)
+        return result
 
     def render(self, data):
 
@@ -165,25 +161,24 @@ class ApplicationVersionController(a.AdminController):
     def access_scopes(self):
         return ["dlc_admin"]
 
-    @coroutine
-    def update(self, attach_to=0):
+    async def update(self, attach_to=0):
 
         if attach_to == "0":
-            yield self.delete()
+            await self.delete()
 
         environment_client = EnvironmentClient(self.application.cache)
         app_id = self.context.get("app_id")
         version_id = self.context.get("version_id")
 
         try:
-            yield environment_client.get_app_info(app_id)
+            await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         app_versions = self.application.app_versions
 
         try:
-            yield app_versions.switch_app_version(self.gamespace, app_id, version_id, attach_to)
+            await app_versions.switch_app_version(self.gamespace, app_id, version_id, attach_to)
         except ApplicationVersionError as e:
             raise a.ActionError(e.message)
 
@@ -199,8 +194,7 @@ class BundleController(a.UploadAdminController):
 
         self.chunks = Queue(10)
 
-    @coroutine
-    def detach(self, **ignored):
+    async def detach(self, **ignored):
 
         bundles = self.application.bundles
         datas = self.application.datas
@@ -210,21 +204,21 @@ class BundleController(a.UploadAdminController):
         data_id = self.context.get("data_id")
 
         try:
-            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+            bundle = await bundles.get_bundle(self.gamespace, bundle_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle error")
         except BundleError as e:
             raise a.ActionError(e.message)
 
         try:
-            yield datas.get_data_version(self.gamespace, data_id)
+            await datas.get_data_version(self.gamespace, data_id)
         except NoSuchDataError:
             raise a.ActionError("No such data version")
         except DataError as e:
             raise a.ActionError(e.message)
 
         try:
-            yield bundles.detach_bundle(self.gamespace, bundle_id, data_id)
+            await bundles.detach_bundle(self.gamespace, bundle_id, data_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle error")
         except BundleError as e:
@@ -236,8 +230,7 @@ class BundleController(a.UploadAdminController):
             app_id=app_id,
             data_id=data_id)
 
-    @coroutine
-    def delete(self, **ignored):
+    async def delete(self, **ignored):
 
         datas = self.application.datas
         bundles = self.application.bundles
@@ -247,21 +240,21 @@ class BundleController(a.UploadAdminController):
         data_id = self.context.get("data_id")
 
         try:
-            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+            bundle = await bundles.get_bundle(self.gamespace, bundle_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle error")
         except BundleError as e:
             raise a.ActionError(e.message)
 
         try:
-            yield datas.get_data_version(self.gamespace, data_id)
+            await datas.get_data_version(self.gamespace, data_id)
         except NoSuchDataError:
             raise a.ActionError("No such data version")
         except DataError as e:
             raise a.ActionError(e.message)
 
         try:
-            yield bundles.delete_bundle(self.gamespace, app_id, bundle_id)
+            await bundles.delete_bundle(self.gamespace, app_id, bundle_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle error")
         except BundleError as e:
@@ -281,8 +274,7 @@ class BundleController(a.UploadAdminController):
             num /= 1024.0
         return "%.1f%s%s" % (num, 'Yi', suffix)
 
-    @coroutine
-    def update_properties(self, bundle_filters, bundle_payload):
+    async def update_properties(self, bundle_filters, bundle_payload):
 
         datas = self.application.datas
         bundles = self.application.bundles
@@ -303,26 +295,26 @@ class BundleController(a.UploadAdminController):
             raise a.ActionError("Corrupted payload")
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+            bundle = await bundles.get_bundle(self.gamespace, bundle_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle")
         except BundleError as e:
             raise a.ActionError(e.message)
 
         try:
-            yield datas.get_data_version(self.gamespace, data_id)
+            await datas.get_data_version(self.gamespace, data_id)
         except NoSuchDataError:
             raise a.ActionError("No such data version")
         except DataError as e:
             raise a.ActionError(e.message)
 
         try:
-            yield bundles.update_bundle_properties(self.gamespace, bundle_id, bundle_filters, bundle_payload)
+            await bundles.update_bundle_properties(self.gamespace, bundle_id, bundle_filters, bundle_payload)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle")
         except BundleError as e:
@@ -334,8 +326,7 @@ class BundleController(a.UploadAdminController):
                          bundle_id=bundle_id,
                          data_id=data_id)
 
-    @coroutine
-    def get(self, app_id, bundle_id, data_id):
+    async def get(self, app_id, bundle_id, data_id):
 
         bundles = self.application.bundles
         datas = self.application.datas
@@ -343,12 +334,12 @@ class BundleController(a.UploadAdminController):
         apps = self.application.app_versions
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            stt = yield apps.get_application(self.gamespace, app_id)
+            stt = await apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
             payload_scheme = ApplicationsModel.DEFAULT_PAYLOAD_SCHEME
@@ -359,14 +350,14 @@ class BundleController(a.UploadAdminController):
             payload_scheme = stt.payload_scheme
 
         try:
-            data = yield datas.get_data_version(self.gamespace, data_id)
+            data = await datas.get_data_version(self.gamespace, data_id)
         except NoSuchDataError:
             raise a.ActionError("No such data version")
         except DataError as e:
             raise a.ActionError(e.message)
 
         try:
-            bundle = yield bundles.get_bundle(self.gamespace, bundle_id, data_id)
+            bundle = await bundles.get_bundle(self.gamespace, bundle_id, data_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle")
         except BundleError as e:
@@ -386,7 +377,7 @@ class BundleController(a.UploadAdminController):
             "payload_scheme": payload_scheme
         }
 
-        raise a.Return(result)
+        return result
 
     def render(self, data):
 
@@ -465,8 +456,7 @@ class BundleController(a.UploadAdminController):
     def access_scopes(self):
         return ["dlc_admin"]
 
-    @coroutine
-    def receive_started(self, filename, args):
+    async def receive_started(self, filename, args):
 
         bundles = self.application.bundles
         environment_client = EnvironmentClient(self.application.cache)
@@ -475,12 +465,12 @@ class BundleController(a.UploadAdminController):
         bundle_id = self.context.get("bundle_id")
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            bundle = yield bundles.get_bundle(self.gamespace, bundle_id)
+            bundle = await bundles.get_bundle(self.gamespace, bundle_id)
         except NoSuchBundleError:
             raise a.ActionError("No such bundle")
         except BundleError as e:
@@ -491,14 +481,12 @@ class BundleController(a.UploadAdminController):
             self.gamespace, app_id, bundle,
             self.__producer__)
 
-    @coroutine
-    def receive_data(self, chunk):
-        yield self.chunks.put(chunk)
+    async def receive_data(self, chunk):
+        await self.chunks.put(chunk)
 
-    @coroutine
-    def receive_completed(self):
+    async def receive_completed(self):
 
-        yield self.chunks.put(None)
+        await self.chunks.put(None)
 
         app_id = self.context.get("app_id")
         bundle_id = self.context.get("bundle_id")
@@ -510,18 +498,16 @@ class BundleController(a.UploadAdminController):
                          bundle_id=bundle_id,
                          data_id=data_id)
 
-    @coroutine
-    def __producer__(self, write):
+    async def __producer__(self, write):
         while True:
-            chunk = yield self.chunks.get()
+            chunk = await self.chunks.get()
             if chunk is None:
                 return
-            yield write(chunk)
+            await write(chunk)
 
 
 class DataVersionController(a.AdminController):
-    @coroutine
-    def delete(self):
+    async def delete(self):
 
         app_id = self.context.get("app_id")
         data_id = self.context.get("data_id")
@@ -529,7 +515,7 @@ class DataVersionController(a.AdminController):
         datas = self.application.datas
 
         try:
-            yield datas.delete_data_version(self.gamespace, app_id, data_id)
+            await datas.delete_data_version(self.gamespace, app_id, data_id)
         except VersionUsesDataError:
             raise a.ActionError("Application Version uses this data, detach the version first.")
 
@@ -538,8 +524,7 @@ class DataVersionController(a.AdminController):
             message="Data version has been deleted",
             app_id=app_id)
 
-    @coroutine
-    def publish(self, **ignored):
+    async def publish(self, **ignored):
 
         datas = self.application.datas
         environment_client = EnvironmentClient(self.application.cache)
@@ -548,12 +533,12 @@ class DataVersionController(a.AdminController):
         data_id = self.context.get("data_id")
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            yield datas.publish(self.gamespace, data_id)
+            await datas.publish(self.gamespace, data_id)
         except NoSuchDataError:
             raise a.ActionError("No such data version")
         except DataError as e:
@@ -563,27 +548,26 @@ class DataVersionController(a.AdminController):
                          message="Publish process has been started",
                          app_id=app_id, data_id=data_id)
 
-    @coroutine
-    def get(self, app_id, data_id):
+    async def get(self, app_id, data_id):
 
         bundles = self.application.bundles
         datas = self.application.datas
         environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            data = yield datas.get_data_version(self.gamespace, data_id)
+            data = await datas.get_data_version(self.gamespace, data_id)
         except NoSuchDataError:
             raise a.ActionError("No such data version")
         except DataError as e:
             raise a.ActionError(e.message)
 
         try:
-            bundles = yield bundles.list_bundles(self.gamespace, data_id)
+            bundles = await bundles.list_bundles(self.gamespace, data_id)
         except BundleError as e:
             raise a.ActionError(e.message)
 
@@ -593,7 +577,7 @@ class DataVersionController(a.AdminController):
             "data_status": data.status + (": " + str(data.reason) if data.reason else "")
         }
 
-        raise a.Return(result)
+        return result
 
     def render(self, data):
 
@@ -720,20 +704,19 @@ class DataVersionController(a.AdminController):
 
 
 class NewBundleController(a.AdminController):
-    @coroutine
-    def get(self, app_id, data_id):
+    async def get(self, app_id, data_id):
 
         datas = self.application.datas
         apps = self.application.app_versions
         environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            stt = yield apps.get_application(self.gamespace, app_id)
+            stt = await apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
             payload_scheme = ApplicationsModel.DEFAULT_PAYLOAD_SCHEME
@@ -744,7 +727,7 @@ class NewBundleController(a.AdminController):
             payload_scheme = stt.payload_scheme
 
         try:
-            yield datas.get_data_version(self.gamespace, data_id)
+            await datas.get_data_version(self.gamespace, data_id)
         except DataError as e:
             raise a.ActionError(e.message)
         except NoSuchDataError:
@@ -756,7 +739,7 @@ class NewBundleController(a.AdminController):
             "payload_scheme": payload_scheme
         }
 
-        raise a.Return(result)
+        return result
 
     def render(self, data):
         return [
@@ -781,8 +764,7 @@ class NewBundleController(a.AdminController):
     def access_scopes(self):
         return ["dlc_admin"]
 
-    @coroutine
-    def create(self, bundle_name, bundle_filters, bundle_payload, **ignored):
+    async def create(self, bundle_name, bundle_filters, bundle_payload, **ignored):
 
         bundles = self.application.bundles
 
@@ -802,7 +784,7 @@ class NewBundleController(a.AdminController):
         bundle_key = random_string(32)
 
         try:
-            bundle_id = yield bundles.create_bundle(
+            bundle_id = await bundles.create_bundle(
                 self.gamespace, data_id, bundle_name,
                 bundle_filters, bundle_payload, bundle_key)
         except BundleError as e:
@@ -817,24 +799,23 @@ class NewBundleController(a.AdminController):
 
 
 class RootAdminController(a.AdminController):
-    @coroutine
-    def get(self):
+    async def get(self):
 
         environment_client = EnvironmentClient(self.application.cache)
-        apps = yield environment_client.list_apps()
+        apps = await environment_client.list_apps()
 
         result = {
             "apps": apps
         }
 
-        raise a.Return(result)
+        return result
 
     def render(self, data):
         return [
             a.breadcrumbs([], "Applications"),
             a.links("Applications", [
                 a.link("app", app_name, icon="mobile", app_id=app_id)
-                    for app_id, app_name in data["apps"].iteritems()
+                    for app_id, app_name in data["apps"].items()
             ]),
             a.links("Navigate", [
                 a.link("/environment/apps", "Edit applications", icon="mobile")
@@ -846,19 +827,18 @@ class RootAdminController(a.AdminController):
 
 
 class ApplicationSettingsController(a.AdminController):
-    @coroutine
-    def get(self, app_id):
+    async def get(self, app_id):
 
         environment_client = EnvironmentClient(self.application.cache)
         apps = self.application.app_versions
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            settings = yield apps.get_application(self.gamespace, app_id)
+            settings = await apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             deployment_method = ""
             deployment_data = {}
@@ -886,10 +866,9 @@ class ApplicationSettingsController(a.AdminController):
             "payload_scheme": payload_scheme
         }
 
-        raise a.Return(result)
+        return result
 
-    @coroutine
-    def update_deployment_method(self, deployment_method):
+    async def update_deployment_method(self, deployment_method):
 
         app_id = self.context.get("app_id")
 
@@ -897,7 +876,7 @@ class ApplicationSettingsController(a.AdminController):
         apps = self.application.app_versions
 
         try:
-            yield environment_client.get_app_info(app_id)
+            await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
@@ -905,7 +884,7 @@ class ApplicationSettingsController(a.AdminController):
             raise a.ActionError("Not a valid deployment method")
 
         try:
-            stt = yield apps.get_application(self.gamespace, app_id)
+            stt = await apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             deployment_data = {}
             filters_scheme = ApplicationsModel.DEFAULT_FILTERS_SCHEME
@@ -916,7 +895,7 @@ class ApplicationSettingsController(a.AdminController):
             payload_scheme = stt.payload_scheme
 
         try:
-            yield apps.update_application(
+            await apps.update_application(
                 self.gamespace, app_id, deployment_method,
                 deployment_data, filters_scheme, payload_scheme)
         except ApplicationError as e:
@@ -925,8 +904,7 @@ class ApplicationSettingsController(a.AdminController):
         raise a.Redirect("app_settings", message="Deployment method has been updated",
                          app_id=app_id)
 
-    @coroutine
-    def update_deployment(self, **kwargs):
+    async def update_deployment(self, **kwargs):
 
         app_id = self.context.get("app_id")
 
@@ -934,12 +912,12 @@ class ApplicationSettingsController(a.AdminController):
         apps = self.application.app_versions
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            settings = yield apps.get_application(self.gamespace, app_id)
+            settings = await apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             raise a.ActionError("Please select deployment method first")
         except ApplicationError as e:
@@ -953,10 +931,10 @@ class ApplicationSettingsController(a.AdminController):
         m = DeploymentMethods.get(deployment_method)()
 
         m.load(deployment_data)
-        yield m.update(**kwargs)
+        await m.update(**kwargs)
 
         try:
-            yield apps.update_application(
+            await apps.update_application(
                 self.gamespace, app_id, deployment_method,
                 m.dump(), filters_scheme, payload_scheme)
         except ApplicationError as e:
@@ -965,8 +943,7 @@ class ApplicationSettingsController(a.AdminController):
         raise a.Redirect("app_settings", message="Deployment settings have been updated",
                          app_id=app_id)
 
-    @coroutine
-    def update_scheme(self, filters_scheme, payload_scheme):
+    async def update_scheme(self, filters_scheme, payload_scheme):
 
         app_id = self.context.get("app_id")
 
@@ -984,12 +961,12 @@ class ApplicationSettingsController(a.AdminController):
             raise a.ActionError("Corrupted payload scheme")
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            settings = yield apps.get_application(self.gamespace, app_id)
+            settings = await apps.get_application(self.gamespace, app_id)
         except NoSuchApplicationError:
             raise a.ActionError("Please select deployment method first")
         except ApplicationError as e:
@@ -999,7 +976,7 @@ class ApplicationSettingsController(a.AdminController):
             deployment_data = settings.deployment_data
 
         try:
-            yield apps.update_application(
+            await apps.update_application(
                 self.gamespace, app_id, deployment_method,
                 deployment_data, filters_scheme, payload_scheme)
         except ApplicationError as e:
@@ -1064,19 +1041,18 @@ class ApplicationSettingsController(a.AdminController):
 
 
 class AttachBundleController(a.AdminController):
-    @coroutine
-    def get(self, app_id, data_id):
+    async def get(self, app_id, data_id):
 
         datas = self.application.datas
         environment_client = EnvironmentClient(self.application.cache)
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            yield datas.get_data_version(self.gamespace, data_id)
+            await datas.get_data_version(self.gamespace, data_id)
         except DataError as e:
             raise a.ActionError(e.message)
         except NoSuchDataError:
@@ -1086,7 +1062,7 @@ class AttachBundleController(a.AdminController):
             "app_name": app.title
         }
 
-        raise a.Return(result)
+        return result
 
     def render(self, data):
         return [
@@ -1115,8 +1091,7 @@ class AttachBundleController(a.AdminController):
     def access_scopes(self):
         return ["dlc_admin"]
 
-    @coroutine
-    def attach(self, bundle_name, bundle_hash):
+    async def attach(self, bundle_name, bundle_hash):
 
         datas = self.application.datas
         bundles = self.application.bundles
@@ -1126,12 +1101,12 @@ class AttachBundleController(a.AdminController):
         data_id = self.context.get("data_id")
 
         try:
-            app = yield environment_client.get_app_info(app_id)
+            app = await environment_client.get_app_info(app_id)
         except AppNotFound as e:
             raise a.ActionError("App was not found.")
 
         try:
-            yield datas.get_data_version(self.gamespace, data_id)
+            await datas.get_data_version(self.gamespace, data_id)
         except DataError as e:
             raise a.ActionError(e.message)
         except NoSuchDataError:
@@ -1144,7 +1119,7 @@ class AttachBundleController(a.AdminController):
         q.status = BundlesModel.STATUS_DELIVERED
 
         try:
-            bundle = yield q.query(one=True)
+            bundle = await q.query(one=True)
         except BundleQueryError as e:
             raise a.ActionError(e.message)
 
@@ -1152,7 +1127,7 @@ class AttachBundleController(a.AdminController):
             raise a.ActionError("No such bundle")
 
         try:
-            yield bundles.attach_bundle(
+            await bundles.attach_bundle(
                 self.gamespace, bundle.bundle_id, data_id)
         except BundleError as e:
             raise a.ActionError(e.message)

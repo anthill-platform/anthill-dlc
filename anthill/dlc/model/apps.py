@@ -1,7 +1,6 @@
 
-from tornado.gen import coroutine, Return
-from common.model import Model
-from common.database import DatabaseError
+from anthill.common.model import Model
+from anthill.common.database import DatabaseError
 
 import ujson
 
@@ -172,10 +171,9 @@ class ApplicationsModel(Model):
     def get_setup_tables(self):
         return ["applications", "application_versions"]
 
-    @coroutine
-    def delete_application_version(self, gamespace_id, app_id, version_id):
+    async def delete_application_version(self, gamespace_id, app_id, version_id):
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 DELETE FROM `application_versions`
                 WHERE `application_name`=%s AND `application_version`=%s AND `gamespace_id`=%s;
@@ -183,10 +181,9 @@ class ApplicationsModel(Model):
         except DatabaseError as e:
             raise ApplicationVersionError("Failed to delete application version: " + e.args[1])
 
-    @coroutine
-    def find_application_version(self, gamespace_id, app_id, version_name):
+    async def find_application_version(self, gamespace_id, app_id, version_name):
         try:
-            application_version = yield self.db.get(
+            application_version = await self.db.get(
                 """
                 SELECT *
                 FROM `application_versions`
@@ -198,12 +195,11 @@ class ApplicationsModel(Model):
         if not application_version:
             raise NoSuchApplicationVersionError()
 
-        raise Return(ApplicationVersionAdapter(application_version))
+        return ApplicationVersionAdapter(application_version)
 
-    @coroutine
-    def get_application_version(self, app_id, version_id):
+    async def get_application_version(self, app_id, version_id):
         try:
-            application_version = yield self.db.get(
+            application_version = await self.db.get(
                 """
                 SELECT *
                 FROM `application_versions`
@@ -215,13 +211,12 @@ class ApplicationsModel(Model):
         if not application_version:
             raise NoSuchApplicationVersionError()
 
-        raise Return(ApplicationVersionAdapter(application_version))
+        return ApplicationVersionAdapter(application_version)
 
-    @coroutine
-    def switch_app_version(self, gamespace_id, app_id, version_id, data_id):
+    async def switch_app_version(self, gamespace_id, app_id, version_id, data_id):
 
         try:
-            yield self.db.insert(
+            await self.db.insert(
                 """
                 INSERT INTO `application_versions`
                 (`application_name`, `application_version`, `current_data_version`, `gamespace_id`)
@@ -232,10 +227,9 @@ class ApplicationsModel(Model):
         except DatabaseError as e:
             raise ApplicationVersionError("Failed to switch app version: " + e.args[1])
 
-    @coroutine
-    def delete_application(self, gamespace_id, app_id):
+    async def delete_application(self, gamespace_id, app_id):
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                 DELETE FROM `applications`
                 WHERE `application_name`=%s AND `gamespace_id`=%s;
@@ -243,10 +237,9 @@ class ApplicationsModel(Model):
         except DatabaseError as e:
             raise ApplicationError("Failed to delete application: " + e.args[1])
 
-    @coroutine
-    def find_application(self, gamespace_id, app_id):
+    async def find_application(self, gamespace_id, app_id):
         try:
-            application_version = yield self.db.get(
+            application_version = await self.db.get(
                 """
                 SELECT *
                 FROM `applications`
@@ -258,12 +251,11 @@ class ApplicationsModel(Model):
         if not application_version:
             raise NoSuchApplicationError()
 
-        raise Return(ApplicationAdapter(application_version))
+        return ApplicationAdapter(application_version)
 
-    @coroutine
-    def get_application(self, gamespace_id, app_id):
+    async def get_application(self, gamespace_id, app_id):
         try:
-            application_version = yield self.db.get(
+            application_version = await self.db.get(
                 """
                 SELECT *
                 FROM `applications`
@@ -275,10 +267,9 @@ class ApplicationsModel(Model):
         if not application_version:
             raise NoSuchApplicationError()
 
-        raise Return(ApplicationAdapter(application_version))
+        return ApplicationAdapter(application_version)
 
-    @coroutine
-    def update_application(self, gamespace_id, app_id, deployment_method,
+    async def update_application(self, gamespace_id, app_id, deployment_method,
                            deployment_data, filters_scheme, payload_scheme):
 
         if not isinstance(deployment_data, dict):
@@ -295,7 +286,7 @@ class ApplicationsModel(Model):
         payload_scheme = ujson.dumps(payload_scheme)
 
         try:
-            yield self.db.insert(
+            await self.db.insert(
                 """
                 INSERT INTO `applications`
                 (`application_name`, `deployment_method`, `deployment_data`, `gamespace_id`,

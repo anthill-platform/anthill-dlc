@@ -1,12 +1,11 @@
 
-from tornado.gen import coroutine, Return
 from tornado.ioloop import IOLoop
 
-from common.model import Model
-from common.database import DatabaseError, ConstraintsError
+from anthill.common.model import Model
+from anthill.common.database import DatabaseError, ConstraintsError
 
-from bundle import BundlesModel
-from deploy import DeploymentError
+from . bundle import BundlesModel
+from . deploy import DeploymentError
 
 
 class DataError(Exception):
@@ -51,11 +50,10 @@ class DatasModel(Model):
     def get_setup_tables(self):
         return ["datas"]
 
-    @coroutine
-    def delete_data_version(self, gamespace_id, app_id, data_id):
+    async def delete_data_version(self, gamespace_id, app_id, data_id):
 
         try:
-            exists = yield self.db.get(
+            exists = await self.db.get(
                 """
                     SELECT *
                     FROM `application_versions`
@@ -67,22 +65,22 @@ class DatasModel(Model):
         if exists:
             raise VersionUsesDataError()
 
-        data = yield self.get_data_version(gamespace_id, data_id)
+        data = await self.get_data_version(gamespace_id, data_id)
 
         if data.status == DatasModel.STATUS_PUBLISHED:
             raise DataError("Cannot delete published data version")
 
-        bundles = yield self.bundles.list_bundles(gamespace_id, data_id)
+        bundles = await self.bundles.list_bundles(gamespace_id, data_id)
 
         if bundles is not None:
             for bundle in bundles:
                 if bundle.status == BundlesModel.STATUS_DELIVERED:
                     continue
 
-                yield self.bundles.delete_bundle(gamespace_id, app_id, data_id, bundle.bundle_id)
+                await self.bundles.delete_bundle(gamespace_id, app_id, data_id, bundle.bundle_id)
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     DELETE FROM `datas`
                     WHERE `data_id`=%s
@@ -92,11 +90,10 @@ class DatasModel(Model):
         except DatabaseError as e:
             raise DataError("Failed to delete data version: " + e.args[1])
 
-    @coroutine
-    def list_data_versions(self, gamespace_id, app_id, published=False):
+    async def list_data_versions(self, gamespace_id, app_id, published=False):
         if published:
             try:
-                versions = yield self.db.query(
+                versions = await self.db.query(
                     """
                         SELECT *
                         FROM `datas`
@@ -105,10 +102,10 @@ class DatasModel(Model):
             except DatabaseError as e:
                 raise DataError("Failed to list data versions: " + e.args[1])
 
-            raise Return(map(DataAdapter, versions))
+            return map(DataAdapter, versions)
         else:
             try:
-                versions = yield self.db.query(
+                versions = await self.db.query(
                     """
                         SELECT *
                         FROM `datas`
@@ -117,12 +114,11 @@ class DatasModel(Model):
             except DatabaseError as e:
                 raise DataError("Failed to list data versions: " + e.args[1])
 
-            raise Return(map(DataAdapter, versions))
+            return map(DataAdapter, versions)
 
-    @coroutine
-    def get_data_version(self, gamespace_id, data_id):
+    async def get_data_version(self, gamespace_id, data_id):
         try:
-            version = yield self.db.get(
+            version = await self.db.get(
                 """
                     SELECT *
                     FROM `datas`
@@ -134,13 +130,12 @@ class DatasModel(Model):
         if not version:
             raise NoSuchDataError()
 
-        raise Return(DataAdapter(version))
+        return DataAdapter(version)
 
-    @coroutine
-    def create_data_version(self, gamespace_id, app_id):
+    async def create_data_version(self, gamespace_id, app_id):
 
         try:
-            result = yield self.db.insert(
+            result = await self.db.insert(
                 """
                     INSERT INTO `datas`
                     (`application_name`, `version_status`, `gamespace_id`)
@@ -149,12 +144,11 @@ class DatasModel(Model):
         except DatabaseError as e:
             raise DataError("Failed to create data version: " + e.args[1])
 
-        raise Return(result)
+        return result
 
-    @coroutine
-    def update_data_version(self, gamespace_id, data_id, status, reason):
+    async def update_data_version(self, gamespace_id, data_id, status, reason):
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     UPDATE `datas`
                     SET `version_status`=%s, `version_status_reason`=%s
@@ -163,10 +157,9 @@ class DatasModel(Model):
         except DatabaseError as e:
             raise DataError("Failed to create data version: " + e.args[1])
 
-    @coroutine
-    def publish(self, gamespace_id, data_id):
+    async def publish(self, gamespace_id, data_id):
 
-        data = yield self.get_data_version(gamespace_id, data_id)
+        data = await self.get_data_version(gamespace_id, data_id)
 
         if data.status == DatasModel.STATUS_PUBLISHED:
             raise DataError("This data version is already published")
@@ -174,7 +167,7 @@ class DatasModel(Model):
         if data.status == DatasModel.STATUS_PUBLISHING:
             raise DataError("This data version is already being published")
 
-        bundles = yield self.bundles.list_bundles(gamespace_id, data_id)
+        bundles = await self.bundles.list_bundles(gamespace_id, data_id)
 
         if not bundles:
             raise DataError("No bundles to publish")
@@ -184,15 +177,14 @@ class DatasModel(Model):
                                      BundlesModel.STATUS_DELIVERED]:
                 raise DataError("Bundle {0} in not uploaded yet".format(bundle.name))
 
-        yield self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_PUBLISHING, "")
+        await self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_PUBLISHING, "")
 
-        @coroutine
-        def process():
+        async def process():
             try:
-                yield self.deployment.deploy(gamespace_id, data.application_name, bundles)
+                await self.deployment.deploy(gamespace_id, data.application_name, bundles)
             except DeploymentError as e:
-                yield self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_ERROR, e.message)
+                await self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_ERROR, e.message)
             else:
-                yield self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_PUBLISHED, "")
+                await self.update_data_version(gamespace_id, data_id, DatasModel.STATUS_PUBLISHED, "")
 
         IOLoop.current().add_callback(process)
