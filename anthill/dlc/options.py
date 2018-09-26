@@ -1,5 +1,6 @@
 
 from anthill.common.options import define
+import os
 
 # Main
 
@@ -68,20 +69,41 @@ define("cache_max_connections",
 
 # DLC
 
-define("data_location",
-       default="/usr/local/anthill/dlc-data",
-       help="DLC content location folder",
-       group="dlc",
-       type=str)
+if os.name == "nt":
+    # Windows
+    define("data_location",
+           default="C:/Anthill/dlc-data",
+           help="DLC content location folder",
+           group="dlc",
+           type=str)
 
-define("data_runtime_location",
-       default="/usr/local/anthill/dlc-runtime",
-       help="DLC content runtime folder",
-       group="dlc",
-       type=str)
+    define("data_runtime_location",
+           default="C:/Anthill/dlc-runtime",
+           help="DLC content runtime folder",
+           group="dlc",
+           type=str)
 
-define("data_host_location",
-       default="http://dlc-dev.anthill/download/",
-       help="DLC content prefix URL",
-       group="dlc",
-       type=str)
+    define("data_host_location",
+           default="http://dlc-dev.anthill/download/",
+           help="DLC content prefix URL",
+           group="dlc",
+           type=str)
+else:
+    # Unix
+    define("data_location",
+           default="/usr/local/anthill/dlc-data",
+           help="DLC content location folder",
+           group="dlc",
+           type=str)
+
+    define("data_runtime_location",
+           default="/usr/local/anthill/dlc-runtime",
+           help="DLC content runtime folder",
+           group="dlc",
+           type=str)
+
+    define("data_host_location",
+           default="http://dlc-dev.anthill/download/",
+           help="DLC content prefix URL",
+           group="dlc",
+           type=str)
