@@ -7,6 +7,9 @@ DEPENDENCIES = [
 
 setup(
     name='anthill-dlc',
+    package_data={
+      "anthill.dlc": ["anthill/dlc/sql", "anthill/dlc/static"]
+    },
     setup_requires=["pypigit-version"],
     git_version="0.1.0",
     description='Downloadable content (DLC) management service for Anthill platform',
