@@ -265,7 +265,7 @@ class BundlesModel(Model):
         except DatabaseError as e:
             raise BundleError("Failed to list bundles: " + e.args[1])
 
-        return map(BundleAdapter, bundles)
+        return list(map(BundleAdapter, bundles))
 
     async def detach_bundle(self, gamespace_id, bundle_id, data_id):
         try:

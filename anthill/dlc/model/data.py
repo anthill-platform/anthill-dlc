@@ -102,7 +102,7 @@ class DatasModel(Model):
             except DatabaseError as e:
                 raise DataError("Failed to list data versions: " + e.args[1])
 
-            return map(DataAdapter, versions)
+            return list(map(DataAdapter, versions))
         else:
             try:
                 versions = await self.db.query(
@@ -114,7 +114,7 @@ class DatasModel(Model):
             except DatabaseError as e:
                 raise DataError("Failed to list data versions: " + e.args[1])
 
-            return map(DataAdapter, versions)
+            return list(map(DataAdapter, versions))
 
     async def get_data_version(self, gamespace_id, data_id):
         try:
